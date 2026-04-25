@@ -252,3 +252,10 @@ Decision Engine реализует бизнес-логику:
 
 Платформы: Yandex Cloud
 
+---
+
+## 6. GitHub-репозиторий и проект
+
+- GitHub-репозиторий: https://github.com/lizkakostereva-lgtm/otus-project
+- GitHub Project доска с задачами: https://github.com/users/lizkakostereva-lgtm/projects/1/
+
