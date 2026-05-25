@@ -51,7 +51,7 @@ terraform {
 
 ```hcl
 provider "yandex" {
-  service_account_key_file = var.sa_key_file
+  tokent                   = var.token
   cloud_id                 = var.cloud_id
   folder_id                = var.folder_id
   zone                     = var.zone
@@ -60,7 +60,7 @@ provider "yandex" {
 
 **Что делает:**
 - Настраивает подключение к Yandex Cloud
-- `service_account_key_file` — путь к JSON-файлу с ключом сервисного аккаунта
+- `token` — iam token
 - `cloud_id` — идентификатор облака
 - `folder_id` — идентификатор каталога, где будут создаваться ресурсы
 - `zone` — зона доступности (по умолчанию ru-central1-a)
@@ -75,7 +75,7 @@ provider "yandex" {
 variable "cloud_id" {}           # ID облака
 variable "folder_id" {}         # ID каталога
 variable "zone" { default = "ru-central1-a" }  # Зона
-variable "sa_key_file" {}        # Путь к ключу сервисного аккаунта
+variable "token" {}        # iam token
 variable "bucket_name" { default = "netology-spark-bucket" }
 variable "service_account_id" {} # ID сервисного аккаунта
 variable "cluster_name" { default = "spark-cluster" }
@@ -84,7 +84,7 @@ variable "cluster_name" { default = "spark-cluster" }
 **Что делает:**
 - Определяет параметры, которые нужно указать при запуске Terraform
 - Значения по умолчанию указаны для необязательных переменных
-- Обязательные переменные (без default): cloud_id, folder_id, sa_key_file, service_account_id
+- Обязательные переменные (без default): cloud_id, folder_id, token, service_account_id
 
 **Зачем нужно:** Позволяет использовать одни и те же манифесты с разными параметрами.
 
@@ -129,17 +129,23 @@ resource "yandex_dataproc_cluster" "spark_cluster" {
   bucket      = yandex_storage_bucket.spark_bucket.bucket
   service_account_id = var.service_account_id
   zone_id     = var.zone
+  security_group_ids = var.security_group_ids
 
   cluster_config {
     version_id = "2.1"
 
     hadoop {
       services = ["SPARK", "HDFS", "YARN"]
+      properties = {
+      }
+      ssh_public_keys = [var.ssh_public_key]
+      oslogin = false
     }
 
     subcluster_spec {
       name = "master"
       role = "MASTERNODE"
+      assign_public_ip = true
       resources {
         resource_preset_id = "s3-c2-m8"
         disk_type_id       = "network-hdd"
@@ -221,8 +227,8 @@ output "master_host" {
 cloud_id            = "xxxxxxxx"
 folder_id           = "xxxxxxxx"
 service_account_id  = "xxxxxxxx"
-sa_key_file         = "authorized_key.json"
-bucket_name         = "spark-bucket"
+token               = "token"
+bucket_name         = "spark-bucket-ek"
 cluster_name        = "spark-cluster"
 zone                = "ru-central1-a"
 ```
@@ -237,48 +243,19 @@ zone                = "ru-central1-a"
 
 ### s3_upload.sh — Загрузка данных в S3
 
-```bash
-#!/bin/bash
-SOURCE_BUCKET="s3://otus-mlops-source-data/"
-DEST_BUCKET="s3://netology-spark-bucket/"
-s3cmd sync ${SOURCE_BUCKET} ${DEST_BUCKET}
-```
-
 **Что делает:** Копирует данные из исходного хранилища в ваш бакет.
 
 **Требования:** Настроенный s3cmd с доступом к Object Storage.
 
 ---
 
-### ssh_connect.sh — Подключение к мастер-узлу
-
-```bash
-#!/bin/bash
-CLUSTER_NAME="spark-cluster"
-MASTER_HOST=$(yc dataproc cluster get ${CLUSTER_NAME} --format json | jq -r '.host_fqdn[0]')
-ssh ubuntu@${MASTER_HOST}
-```
-
-**Что делает:** Получает FQDN мастер-узла и подключается по SSH.
-
-**Требования:** Установленный yc CLI.
-
----
 
 ### distcp_to_hdfs.sh — Копирование данных в HDFS
-
-```bash
-#!/bin/bash
-BUCKET_NAME="netology-spark-bucket"
-hadoop distcp s3a://${BUCKET_NAME} hdfs:///data
-hdfs dfs -ls /data
-```
 
 **Что делает:**
 1. Копирует данные из S3 в HDFS с помощью hadoop distcp
 2. Выводит содержимое директории /data в HDFS
 
-**Вывод команды — это то, что нужно заскринить:** результат `hdfs dfs -ls /data`
 
 ---
 
@@ -350,12 +327,15 @@ terraform destroy
 
 ## Ссылки
 
-- **Bucket URL:** https://storage.yandexcloud.net/spark-bucket
+- **Bucket URL:** https://storage.yandexcloud.net/spark-bucket-ek
 
 ---
 
 ## Скриншоты для проверки
 
 1. **Bucket** — скриншот публичного бакета в консоли
+![backet-s3.png](backet-s3.png)
 2. **Dataproc Cluster** — работающий кластер в консоли
-3. **HDFS** — вывод `hdfs dfs -ls /data` с файлами
+![spark.png](spark.png)
+3. **HDFS** — вывод `/user/root/data/` с файлами
+![hdfs.png](hdfs.png)
