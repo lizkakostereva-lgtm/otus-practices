@@ -1,0 +1,13 @@
+cloud_id          = "id"
+folder_id         = "id"
+service_account_id = "id"
+
+token             = "token"
+
+ssh_public_key    = "key"
+
+security_group_ids = ["id"]
+
+bucket_name       = "spark-bucket"
+cluster_name      = "spark-cluster"
+zone              = "ru-central1-a"
