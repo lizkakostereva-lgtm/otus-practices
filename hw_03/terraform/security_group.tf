@@ -1,6 +1,6 @@
 resource "yandex_vpc_security_group" "spark_sg" {
   name       = "spark-sg"
-  network_id = yandex_vpc_network.spark_network.id
+  network_id = var.network_id
 
   ingress {
     protocol       = "TCP"

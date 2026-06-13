@@ -65,6 +65,14 @@ SSH to master node:
 ssh yc-user@MASTER_PUBLIC_IP
 ```
 
+```bash
+sudo apt update
+sudo apt install -y python3 python3-pip
+pip3 install jupyterlab
+echo 'export PATH=$HOME/.local/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
 Start JupyterLab:
 
 ```bash

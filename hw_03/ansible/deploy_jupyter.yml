@@ -1,0 +1,55 @@
+---
+- name: Run DistCp, deploy notebook and start Jupyter
+  hosts: spark_master
+  become: true
+
+  vars:
+    notebook_src: fraud_analysis_fixed.ipynb
+    notebook_dst: /root/fraud_analysis_fixed.ipynb
+
+  tasks:
+    - name: Copy distcp script to master
+      copy:
+        src: distcp_to_hdfs.sh
+        dest: /root/distcp_to_hdfs.sh
+        mode: '0755'
+
+    - name: Run DistCp upload to HDFS
+      command: /root/distcp_to_hdfs.sh
+      register: distcp_result
+
+    - name: Show DistCp output
+      debug:
+        var: distcp_result.stdout_lines
+
+    - name: Install Jupyter systemd unit
+      copy:
+        src: jupyter.service
+        dest: /etc/systemd/system/jupyter.service
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: true
+
+    - name: Copy notebook to master
+      copy:
+        src: "{{ notebook_src }}"
+        dest: "{{ notebook_dst }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable and start Jupyter service
+      systemd:
+        name: jupyter
+        enabled: true
+        state: restarted
+
+    - name: Wait for Jupyter port
+      wait_for:
+        port: 8888
+        host: 127.0.0.1
+        timeout: 120

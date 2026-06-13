@@ -40,7 +40,7 @@ resource "yandex_dataproc_cluster" "spark_cluster" {
 
       assign_public_ip = true
 
-      subnet_id = yandex_vpc_subnet.spark_subnet.id
+      subnet_id = var.subnet_id
 
       resources {
         resource_preset_id = "s3-c2-m8"
@@ -57,7 +57,7 @@ resource "yandex_dataproc_cluster" "spark_cluster" {
 
       role = "DATANODE"
 
-      subnet_id = yandex_vpc_subnet.spark_subnet.id
+      subnet_id = var.subnet_id
 
       resources {
         resource_preset_id = "s3-c4-m16"
