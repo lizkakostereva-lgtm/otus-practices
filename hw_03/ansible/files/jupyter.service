@@ -1,0 +1,17 @@
+[Unit]
+Description=Jupyter Lab
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root
+Environment="HADOOP_CONF_DIR=/etc/hadoop/conf"
+Environment="YARN_CONF_DIR=/etc/hadoop/conf"
+Environment="SPARK_HOME=/usr/lib/spark"
+ExecStart=/opt/conda/bin/jupyter-lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
