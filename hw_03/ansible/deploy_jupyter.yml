@@ -4,8 +4,8 @@
   become: true
 
   vars:
-    notebook_src: fraud_analysis_fixed.ipynb
-    notebook_dst: /root/fraud_analysis_fixed.ipynb
+    notebook_src: fraud_analysis.ipynb
+    notebook_dst: /root/fraud_analysis.ipynb
 
   tasks:
     - name: Copy distcp script to master
@@ -21,6 +21,23 @@
     - name: Show DistCp output
       debug:
         var: distcp_result.stdout_lines
+
+    - name: Update apt cache
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install Python and pip
+      apt:
+        name:
+          - python3
+          - python3-pip
+        state: present
+
+    - name: Install JupyterLab
+      pip:
+        name: jupyterlab
+        executable: pip3
 
     - name: Install Jupyter systemd unit
       copy:

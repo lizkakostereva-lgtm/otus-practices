@@ -1,98 +1,76 @@
-# Fraud Transactions Processing with Yandex Data Proc
+# Обработка мошеннических транзакций с Yandex Data Proc
 
-## Infrastructure
+Домашнее задание по курсу OTUS. Создание инфраструктуры для анализа и очистки датасета мошеннических транзакций с помощью Spark-кластера в Yandex Cloud.
 
-Terraform creates:
+## Задание
 
-* Yandex Object Storage bucket
-* Service Account
-* IAM roles
-* Security Group
-* Yandex Data Proc Spark cluster
+1. Создать сервисный аккаунт в Yandex Cloud для работы с кластером Yandex Data Processing и предоставить ему необходимые роли.
+2. Создать bucket в Yandex Cloud Object Storage и предоставить сервисному аккаунту права на запись. Bucket сделан общедоступным на чтение.
+3. Создать Spark-кластер в Yandex Data Processing с двумя подкластерами (master и data).
+4. Проанализировать датасет мошеннических транзакций на наличие ошибочных данных с помощью Jupyter Notebook.
+5. Создать скрипт очистки данных на Spark.
+6. Выполнить очистку датасета и сохранить результат в bucket в формате Parquet.
 
-Cluster configuration:
-
-### Master
-
-* s3-c2-m8
-* 40 GB disk
-
-### Data
-
-* s3-c4-m16
-* 3 hosts
-* 128 GB disk
-
-## Public Bucket
-
-Bucket URL:
+## Публичный bucket
 
 https://storage.yandexcloud.net/spark-bucket-ek
 
-## Upload source data to HDFS
+## Структура проекта
+
+```
+terraform/       — инфраструктура (Terraform)
+ansible/         — развёртывание Jupyter и загрузка данных (Ansible)
+```
+
+## Порядок запуска
+
+### 1. Terraform — создание инфраструктуры
+
+Заполните `terraform/terraform.tfvars` (токен, cloud_id, folder_id, subnet_id, network_id, ssh_ключ):
 
 ```bash
-bash scripts/distcp_to_hdfs.sh
+cd terraform
+terraform init
+terraform plan
+terraform apply
 ```
 
-Alternative:
+Будут созданы:
+- сервисный аккаунт с необходимыми ролями
+- Object Storage bucket
+- группа безопасности
+- Spark-кластер Yandex Data Proc (версия 2.1, мастер s3-c2-m8, 3 data-ноды s3-c4-m16)
+
+### 2. Ansible — развёртывание Jupyter и загрузка данных
+
+Скопируйте в `ansible/host.ini` IP-адрес мастер-узла кластера (вывод `terraform output`) и выполните:
 
 ```bash
-bash scripts/download_to_hdfs.sh
+cd ansible
+ansible-playbook -i host.ini deploy_jupyter.yml
 ```
 
-## Run quality analysis
+Плейбук:
+- копирует и запускает скрипт DistCp для загрузки исходных данных из бакета `otus-mlops-source-data` в HDFS
+- устанавливает JupyterLab на мастер-узле
+- развёртывает ноутбук `fraud_analysis.ipynb`
+- запускает Jupyter как systemd-сервис на порту 8888
 
-```bash
-spark-submit \
-  --master yarn \
-  spark/quality_report.py
-```
+### 3. Jupyter Notebook — анализ качества данных
 
-## Run cleaning job
+Ноутбук `fraud_analysis.ipynb`, развёрнутый на мастер-узле, выполняет:
 
-```bash
-spark-submit \
-  --master yarn \
-  spark/clean_data.py
-```
+- загрузку и исследование датасета мошеннических транзакций из HDFS
+- выявление проблем с данными: пропуски, дубликаты, некорректные типы, выбросы, аномалии
+- визуализацию распределений ключевых признаков
+- формирование выводов о качестве данных
 
-## Run JupyterLab
+### 4. Скрипт очистки данных (Spark)
 
-SSH to master node:
+Скрипт очистки в ноутбуке `fraud_analysis.ipynb` на Apache Spark обрабатывает выявленные проблемы:
+- удаление дубликатов
+- обработка пропущенных значений
+- фильтрация аномалий
+- приведение типов
 
-```bash
-ssh yc-user@MASTER_PUBLIC_IP
-```
-
-```bash
-sudo apt update
-sudo apt install -y python3 python3-pip
-pip3 install jupyterlab
-echo 'export PATH=$HOME/.local/bin:$PATH' >> ~/.bashrc
-source ~/.bashrc
-```
-
-Start JupyterLab:
-
-```bash
-jupyter lab \
-  --ip=0.0.0.0 \
-  --port=8888 \
-  --no-browser \
-  --allow-root
-```
-
-Open browser:
-
-```text
-http://MASTER_PUBLIC_IP:8888
-```
-
-## Output Data
-
-Cleaned dataset is stored in parquet format:
-
-```text
-s3a://spark-bucket-ek/cleaned-data
-```
+Результат сохраняется в бакет в формате **Parquet** для эффективного хранения больших объёмов структурированных данных.
