@@ -27,11 +27,11 @@ jobs:
 
       - name: Sync DAG files to Airflow bucket
         run: |
-          aws s3 sync airflow/dags/ "s3://${DAGS_BUCKET}/" --delete --exclude "*" --include "*.py"
+          aws s3 sync hw_05/airflow/dags/ "s3://${DAGS_BUCKET}/" --endpoint-url=https://storage.yandexcloud.net --delete --exclude "*" --include "*.py"
           echo "DAGs synced to s3://${DAGS_BUCKET}/"
 
       - name: Sync scripts to Data Proc bucket
         run: |
-          aws s3 sync airflow/scripts/ "s3://${SCRIPTS_BUCKET}/scripts/" --delete
+          aws s3 sync hw_05/airflow/scripts/ "s3://${SCRIPTS_BUCKET}/scripts/" --endpoint-url=https://storage.yandexcloud.net --delete
           echo "Scripts synced to s3://${SCRIPTS_BUCKET}/scripts/"
 
