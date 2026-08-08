@@ -1,0 +1,16 @@
+cloud_id          = "id"
+folder_id         = "id"
+subnet_id         = "id"
+network_id        = "id"
+
+token             = "token"
+
+ssh_public_key    = "key"
+
+bucket_name       = "spark-bucket-ek"
+
+dags_bucket_name       = "airflow-dags-bucket"
+airflow_cluster_name   = "airflow-cluster"
+airflow_admin_password = "AirflowAdmin2026!"
+
+zone              = "ru-central1-a"
