@@ -1,0 +1,14 @@
+terraform/terraform.tfvars
+terraform/secret-key.txt
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+*.tfstate
+*.tfstate.backup
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+
+# Справочный репозиторий с занятия (не публиковать)
+otus-practice-data-pipeline-main/

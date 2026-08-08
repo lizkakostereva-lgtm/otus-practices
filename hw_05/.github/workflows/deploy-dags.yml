@@ -1,0 +1,36 @@
+name: Deploy Airflow DAGs & Scripts
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "airflow/**"
+      - ".github/workflows/deploy-dags.yml"
+  workflow_dispatch:
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.YC_SA_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.YC_SA_SECRET_KEY }}
+  DAGS_BUCKET: ${{ vars.YC_DAGS_BUCKET || 'airflow-dags-bucket-ek' }}
+  SCRIPTS_BUCKET: ${{ vars.YC_SCRIPTS_BUCKET || 'spark-bucket-ek' }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS CLI for Yandex Object Storage
+        run: |
+          aws configure set endpoint-url https://storage.yandexcloud.net
+          aws configure set region ru-central1
+
+      - name: Sync DAG files to Airflow bucket
+        run: |
+          aws s3 sync airflow/dags/ "s3://${DAGS_BUCKET}/" --delete --exclude "*" --include "*.py"
+          echo "DAGs synced to s3://${DAGS_BUCKET}/"
+
+      - name: Sync scripts to Data Proc bucket
+        run: |
+          aws s3 sync airflow/scripts/ "s3://${SCRIPTS_BUCKET}/scripts/" --delete
+          echo "Scripts synced to s3://${SCRIPTS_BUCKET}/scripts/"
