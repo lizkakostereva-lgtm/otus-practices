@@ -34,3 +34,4 @@ jobs:
         run: |
           aws s3 sync airflow/scripts/ "s3://${SCRIPTS_BUCKET}/scripts/" --delete
           echo "Scripts synced to s3://${SCRIPTS_BUCKET}/scripts/"
+
