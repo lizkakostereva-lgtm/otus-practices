@@ -39,3 +39,7 @@ build/
 **/terraform/terraform.tfvars
 **/secret-key.txt
 **/terraform/secret-key.txt
+
+# Ansible (реальные IP/секреты)
+**/ansible/hosts.ini
+**/ansible/vars.yml
