@@ -63,24 +63,39 @@ MLFLOW_VERSION = "2.16.2"
 
 
 def ensure_mlflow():
-    """Data Proc conda image has no mlflow. Install it on the driver into a
-    writable target dir (pip --user fails: job user has no writable HOME).
-    Version is pinned to match the Tracking Server (2.16.2): the latest mlflow
-    removed `ModelInputExample`, breaking `mlflow.spark` import on the driver."""
-    target = "/tmp/mlflow_packages"
-    try:
-        import mlflow
-        if mlflow.__version__ == MLFLOW_VERSION and os.path.abspath(mlflow.__file__).startswith(target):
-            return
-    except Exception:
-        pass
+    """Make sure a working mlflow is importable on the driver.
+
+    The Data Proc image ships its own mlflow whose `mlflow.spark` import is
+    broken (`ModelInputExample` was removed from `mlflow.models`). The job user
+    has no writable HOME, so we install the pinned version (matching the
+    Tracking Server) into a writable target dir, prepend it to sys.path and
+    DROP any already-imported mlflow modules - otherwise Python returns the
+    cached (broken) copy from the base env and the pinned one never wins.
+    `mlflow.spark` is imported eagerly so a broken install fails in the first
+    minute of the job, not after 30 minutes of training.
+    """
+    import shutil
     import subprocess
+
+    target = "/tmp/mlflow_packages"
+    shutil.rmtree(target, ignore_errors=True)
     subprocess.check_call([
         sys.executable, "-m", "pip", "install", "--quiet",
         "--disable-pip-version-check", "--target", target,
-        "--upgrade", f"mlflow=={MLFLOW_VERSION}",
+        f"mlflow=={MLFLOW_VERSION}",
     ])
+    for name in list(sys.modules):
+        if name == "mlflow" or name.startswith("mlflow."):
+            del sys.modules[name]
     sys.path.insert(0, target)
+
+    import mlflow
+    import mlflow.spark  # noqa: F401 - fail fast if spark logging would break
+    path = os.path.abspath(mlflow.__file__)
+    print(f"Using mlflow {mlflow.__version__} from {path}", flush=True)
+    if mlflow.__version__ != MLFLOW_VERSION:
+        raise RuntimeError(f"Expected mlflow {MLFLOW_VERSION}, got "
+                           f"{mlflow.__version__} loaded from {path}")
 
 
 def main():

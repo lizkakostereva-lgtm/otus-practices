@@ -189,6 +189,10 @@ with DAG(
             "spark:spark.executor.memoryOverhead": "3g",
             "spark:spark.driver.memory": "4g",
             "spark:spark.driver.memoryOverhead": "2g",
+            # Установить mlflow в conda-окружение всех нод: базовая версия в
+            # образе Data Proc сломана (mlflow.spark -> ImportError:
+            # ModelInputExample). Должна совпадать с версией Tracking Server.
+            "pip:mlflow": "2.16.2",
         },
         masternode_resource_preset="s3-c2-m8",
         masternode_disk_type="network-hdd",
