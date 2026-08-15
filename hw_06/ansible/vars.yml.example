@@ -1,0 +1,14 @@
+# Заполнить значениями из outputs terraform (см. README), затем скопировать в vars.yml.
+pg_user: mlflow
+pg_db: mlflow
+pg_password: MlflowPostgres2026!
+
+# internal IP postgres-vm: terraform output postgres_vm_internal_ip
+pg_host: 10.130.0.5
+
+# статический ключ mlflow-sa: terraform output mlflow_sa_access_key_id / mlflow_sa_secret_key
+mlflow_aws_key: ""
+mlflow_aws_secret: ""
+
+mlflow_s3_endpoint: https://storage.yandexcloud.net
+artifact_root: s3://mlflow-bucket-ek/artifacts
