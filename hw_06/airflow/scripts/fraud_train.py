@@ -59,19 +59,26 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+MLFLOW_VERSION = "2.16.2"
+
+
 def ensure_mlflow():
     """Data Proc conda image has no mlflow. Install it on the driver into a
-    writable target dir (pip --user fails: job user has no writable HOME)."""
+    writable target dir (pip --user fails: job user has no writable HOME).
+    Version is pinned to match the Tracking Server (2.16.2): the latest mlflow
+    removed `ModelInputExample`, breaking `mlflow.spark` import on the driver."""
+    target = "/tmp/mlflow_packages"
     try:
-        import mlflow  # noqa: F401
-        return
+        import mlflow
+        if mlflow.__version__ == MLFLOW_VERSION and os.path.abspath(mlflow.__file__).startswith(target):
+            return
     except Exception:
         pass
     import subprocess
-    target = "/tmp/mlflow_packages"
     subprocess.check_call([
         sys.executable, "-m", "pip", "install", "--quiet",
-        "--disable-pip-version-check", "--target", target, "mlflow",
+        "--disable-pip-version-check", "--target", target,
+        "--upgrade", f"mlflow=={MLFLOW_VERSION}",
     ])
     sys.path.insert(0, target)
 
