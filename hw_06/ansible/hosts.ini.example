@@ -1,0 +1,11 @@
+# IP-адреса ВМ после terraform apply (см. README):
+#   postgres_vm_public_ip  -> [postgres]
+#   mlflow_vm_public_ip    -> [mlflow]
+[postgres]
+10.130.0.5 ansible_user=ubuntu
+
+[mlflow]
+10.130.0.6 ansible_user=ubuntu
+
+[all:vars]
+ansible_ssh_private_key_file=~/.ssh/id_ed25519
