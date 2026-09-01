@@ -1,0 +1,60 @@
+---
+# Установка MLflow Tracking Server на mlflow-vm.
+#
+# Запуск (после deploy_postgres.yml):
+#   ansible-playbook -i hosts.ini deploy_mlflow.yml --key-file ~/.ssh/id_ed25519
+- name: Deploy MLflow Tracking Server
+  hosts: mlflow
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Install prerequisites
+      apt:
+        name:
+          - python3-venv
+          - python3-pip
+          - wget
+        state: present
+        update_cache: yes
+
+    - name: Create /opt/mlflow
+      file:
+        path: /opt/mlflow
+        state: directory
+
+    - name: Create virtualenv
+      command: python3 -m venv /opt/mlflow/venv
+      args:
+        creates: /opt/mlflow/venv/bin/pip
+
+    - name: Install mlflow and dependencies
+      pip:
+        virtualenv: /opt/mlflow/venv
+        name:
+          - "mlflow==2.16.2"
+          - "psycopg2-binary"
+          - "boto3"
+
+    - name: Deploy mlflow systemd unit
+      template:
+        src: mlflow.service.j2
+        dest: /etc/systemd/system/mlflow.service
+
+    - name: Enable and start MLflow
+      systemd:
+        name: mlflow
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Wait for MLflow API
+      uri:
+        url: "http://127.0.0.1:5000/health"
+        status_code: 200
+      register: _health
+      retries: 30
+      delay: 2
+      until: _health.status == 200
