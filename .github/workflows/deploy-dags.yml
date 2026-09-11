@@ -4,7 +4,9 @@ on:
   push:
     branches: [main, master]
     paths:
-      - "airflow/**"
+      - "hw_06/airflow/**"
+      - "hw_07/airflow/**"
+      - "hw_08/airflow/**"
       - ".github/workflows/deploy-dags.yml"
   workflow_dispatch:
 
@@ -25,13 +27,16 @@ jobs:
           aws configure set endpoint-url https://storage.yandexcloud.net
           aws configure set region ru-central1
 
-      - name: Sync DAG files to Airflow bucket
+      - name: Sync DAGs to Airflow bucket
         run: |
-          aws s3 sync hw_05/airflow/dags/ "s3://${DAGS_BUCKET}/" --endpoint-url=https://storage.yandexcloud.net --delete --exclude "*" --include "*.py"
+          aws s3 sync hw_06/airflow/dags/ "s3://${DAGS_BUCKET}/" --endpoint-url=https://storage.yandexcloud.net --delete --exclude "*" --include "*.py"
+          aws s3 sync hw_07/airflow/dags/ "s3://${DAGS_BUCKET}/" --endpoint-url=https://storage.yandexcloud.net --delete --exclude "*" --include "*.py"
+          aws s3 sync hw_08/airflow/dags/ "s3://${DAGS_BUCKET}/" --endpoint-url=https://storage.yandexcloud.net --delete --exclude "*" --include "*.py"
           echo "DAGs synced to s3://${DAGS_BUCKET}/"
 
       - name: Sync scripts to Data Proc bucket
         run: |
-          aws s3 sync hw_05/airflow/scripts/ "s3://${SCRIPTS_BUCKET}/scripts/" --endpoint-url=https://storage.yandexcloud.net --delete
+          aws s3 sync hw_06/airflow/scripts/ "s3://${SCRIPTS_BUCKET}/scripts/" --endpoint-url=https://storage.yandexcloud.net --delete
+          aws s3 sync hw_07/airflow/scripts/ "s3://${SCRIPTS_BUCKET}/scripts/" --endpoint-url=https://storage.yandexcloud.net --delete
+          aws s3 sync hw_08/airflow/scripts/ "s3://${SCRIPTS_BUCKET}/scripts/" --endpoint-url=https://storage.yandexcloud.net --delete
           echo "Scripts synced to s3://${SCRIPTS_BUCKET}/scripts/"
-

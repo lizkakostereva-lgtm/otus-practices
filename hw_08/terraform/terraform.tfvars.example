@@ -1,0 +1,27 @@
+cloud_id   = "b1gsfvsq9k0th0eo1m8o"
+folder_id  = "b1gslcf31j2qksdat95l"
+subnet_id  = "e9bq9lp9l4nvi0jobouq"
+network_id = "enp5nrl2hd7ilo3oimhp"
+
+token = "<yc-oauth-token>"
+
+ssh_public_key = "ssh-ed25519 <public_key> user@host"
+
+bucket_name = "spark-bucket-ek"
+
+dags_bucket_name       = "airflow-dags-bucket-ek"
+airflow_cluster_name   = "airflow-cluster"
+airflow_admin_password = "<airflow-admin-password>"
+
+# --- MLflow ---
+mlflow_bucket_name = "mlflow-bucket-ek"
+mlflow_pg_password = "<mlflow-pg-password>"
+
+zone = "ru-central1-a"
+
+# --- Managed Kafka ---
+kafka_cluster_name = "fraud-kafka"
+kafka_user_name    = "fraud-user"
+kafka_user_password = "<kafka-password-at-least-8-chars>"
+kafka_input_topic  = "fraud-transactions"
+kafka_output_topic = "fraud-predictions"
