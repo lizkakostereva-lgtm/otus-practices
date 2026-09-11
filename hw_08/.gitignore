@@ -1,0 +1,26 @@
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+*.tfplan
+
+# Ansible (реальные IP/секреты — заполняются из hw_07)
+ansible/hosts.ini
+ansible/vars.yml
+ansible/hosts.ini.example
+ansible/vars.yml.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Env
+.env
+
+# Airflow (секреты/конфиг)
+airflow/airflow_variables.json
+airflow/airflow_connection_extra.json

@@ -1,0 +1,18 @@
+[Unit]
+Description=MLflow Tracking Server
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/mlflow
+Environment="MLFLOW_S3_ENDPOINT_URL={{ mlflow_s3_endpoint }}"
+Environment="AWS_ENDPOINT_URL={{ mlflow_s3_endpoint }}"
+Environment="AWS_ACCESS_KEY_ID={{ mlflow_aws_key }}"
+Environment="AWS_SECRET_ACCESS_KEY={{ mlflow_aws_secret }}"
+Environment="AWS_DEFAULT_REGION=ru-central1"
+ExecStart=/opt/mlflow/venv/bin/mlflow server --backend-store-uri "postgresql://{{ pg_user }}:{{ pg_password }}@{{ pg_host }}:5432/{{ pg_db }}" --default-artifact-root {{ artifact_root }} --host 0.0.0.0 --port 5000
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

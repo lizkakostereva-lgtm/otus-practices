@@ -1,0 +1,63 @@
+---
+# Установка PostgreSQL на postgres-vm (метаданные MLflow).
+#
+# Запуск:
+#   ansible-playbook -i hosts.ini deploy_postgres.yml --key-file ~/.ssh/id_ed25519
+- name: Deploy PostgreSQL for MLflow
+  hosts: postgres
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Install PostgreSQL
+      apt:
+        name:
+          - postgresql
+          - acl
+        state: present
+        update_cache: yes
+
+    - name: Start and enable PostgreSQL
+      systemd:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Set postgres superuser password
+      become: yes
+      become_user: postgres
+      command: psql -c "ALTER USER postgres WITH PASSWORD '{{ pg_password }}';"
+
+    - name: Create mlflow role
+      become: yes
+      become_user: postgres
+      shell: >-
+        psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ pg_user }}'" | grep -q 1 ||
+        psql -c "CREATE ROLE {{ pg_user }} LOGIN PASSWORD '{{ pg_password }}';"
+
+    - name: Create mlflow database
+      become: yes
+      become_user: postgres
+      shell: >-
+        psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ pg_db }}'" | grep -q 1 ||
+        createdb -O {{ pg_user }} {{ pg_db }}
+
+    - name: Listen on all interfaces
+      become: yes
+      lineinfile:
+        path: /etc/postgresql/14/main/postgresql.conf
+        regexp: "^#?listen_addresses"
+        line: "listen_addresses = '*'"
+
+    - name: Allow password auth from the subnet
+      become: yes
+      lineinfile:
+        path: /etc/postgresql/14/main/pg_hba.conf
+        line: "host all all 0.0.0.0/0 md5"
+
+    - name: Restart PostgreSQL
+      systemd:
+        name: postgresql
+        state: restarted
