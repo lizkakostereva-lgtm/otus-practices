@@ -57,6 +57,15 @@ resource "yandex_kubernetes_cluster" "main" {
       cluster_autoscaler_enabled = true
     }
   }
+
+  # YC validates the service account roles server-side when the cluster is
+  # created and answers "Permission denied" if they are not in place yet.
+  # Without these depends_on the bindings may still be in flight.
+  depends_on = [
+    yandex_resourcemanager_folder_iam_member.cluster_k8s_clusters_agent,
+    yandex_resourcemanager_folder_iam_member.cluster_vpc_public_admin,
+    yandex_resourcemanager_folder_iam_member.nodes_registry_puller,
+  ]
 }
 
 # Worker nodes: exactly var.node_count, fixed scale so "3 nodes" stays literal.
