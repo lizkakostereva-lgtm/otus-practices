@@ -1,0 +1,27 @@
+# NodePort: the cheapest way to get a public endpoint on Yandex Cloud.
+# Any node's public IP + nodePort is enough to call the API.
+#
+#   curl http://<NODE_PUBLIC_IP>:30080/api/v1/predict ...
+#
+# For an auto-assigned public address instead, switch spec.type to
+# LoadBalancer and drop the nodePort field (Yandex provisions a public IP).
+apiVersion: v1
+kind: Service
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  type: NodePort
+  externalTrafficPolicy: Cluster
+  selector:
+    app.kubernetes.io/name: url-fraud-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080
+      protocol: TCP

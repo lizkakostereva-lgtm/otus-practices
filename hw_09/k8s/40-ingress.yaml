@@ -1,0 +1,31 @@
+# Optional: the same API behind a Yandex Load Balancer with a static public IP.
+#
+# Apply k8s/40-ingress.yaml and terraform (see the Load Balancer section in the
+# README) instead of k8s/30-service-nodeport.yaml when you want:
+#   * a stable public IP that does not change with the nodes,
+#   * a real domain + TLS certificate,
+#   * no NodePort open to the internet.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/part-of: url-fraud
+  annotations:
+    # Managed Ingress controller handles TLS and the public address.
+    ingress.kubernetes.io/size: s
+spec:
+  ingressClassName: yandex-ingress
+  rules:
+    - host: url-fraud.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: url-fraud-api
+                port:
+                  name: http

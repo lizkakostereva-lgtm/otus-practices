@@ -1,0 +1,21 @@
+# Runtime knobs. The image tag lives in the Deployment so `kubectl set image`
+# can roll it forward; everything else is a plain environment variable.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: url-fraud-api-config
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/part-of: url-fraud
+data:
+  LOG_LEVEL: "INFO"
+  ENVIRONMENT: "production"
+  SERVICE_NAME: "url-fraud-api"
+  ENABLE_METRICS: "true"
+  TRAIN_ON_STARTUP: "false"
+  # Empty means "use the F1-optimal threshold stored in models/metadata.json".
+  DEFAULT_THRESHOLD: ""
+  MAX_BATCH_SIZE: "100"
+  MAX_URL_LENGTH: "2048"
+  CORS_ORIGINS: "*"

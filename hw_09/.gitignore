@@ -1,0 +1,35 @@
+# hw_09 — local artefacts only.
+# NOTE: models/model.joblib and models/metadata.json ARE committed on purpose:
+# the Docker image must build without network access and tests must run offline.
+
+# Training data (22 MB, downloaded by `make download-data`)
+data/*
+!data/.gitkeep
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+
+# Local overrides
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

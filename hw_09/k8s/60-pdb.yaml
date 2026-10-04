@@ -1,0 +1,15 @@
+# PodDisruptionBudget: during voluntary disruptions (node drain, cluster
+# upgrade) keep at least one replica serving.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: url-fraud-api
