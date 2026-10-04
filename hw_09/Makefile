@@ -155,6 +155,10 @@ kubeconfig: ## Download the cluster kubeconfig to ~/.kube/config-url-fraud-clust
 pull-secret: ## Create the GHCR imagePullSecret in the cluster
 	@./scripts/create_image_pull_secret.sh
 
+.PHONY: gh-setup
+gh-setup: ## Configure GitHub Actions secrets/variables for the pipeline (needs gh)
+	@./scripts/setup_github.sh
+
 .PHONY: deploy
 deploy: ## Apply the k8s manifests for the current image tag
 	./scripts/deploy_k8s.sh "$(PUSH_IMAGE):$(IMAGE_TAG)"

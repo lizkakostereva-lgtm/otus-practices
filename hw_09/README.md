@@ -415,10 +415,6 @@ make push
 Переопределить при необходимости: `make push IMAGE_TAG=1.0.0
 GITHUB_OWNER=my-org`.
 
-> Сделайте пакет **public** в UI GitHub (package → Settings → General →
-> Change visibility), и тогда `imagePullSecret` не понадобится. Если оставить
-> приватным — создайте секрет заранее, см. [Эксплуатация](#эксплуатация).
-
 ---
 
 ## CI/CD
@@ -447,6 +443,16 @@ test ─┘
 
 ### Что нужно настроить в GitHub
 
+Всё это ставится одной командой вместо ручного заполнения Settings:
+
+```bash
+brew install gh && gh auth login     # один раз
+make gh-setup                        # или ./scripts/setup_github.sh
+```
+
+Скрипт идемпотентен (каждый шаг перезаписывает своё значение), так что чинить
+устаревший секрет — та же команда. Что он выставляет:
+
 Repository **Settings → Secrets and variables → Actions**:
 
 | Имя                | Тип     | Зачем                                                  |
@@ -455,22 +461,41 @@ Repository **Settings → Secrets and variables → Actions**:
 | `KUBE_CONTEXT`     | var     | Имя контекста, по умолчанию `url-fraud-cluster`        |
 | `IMAGE_PULL_SECRET`| var     | Имя существующего pull-секрета, если пакет приватный   |
 
+Полезные флаги:
+
+```bash
+./scripts/setup_github.sh --no-kubeconfig              # только CI, кластера ещё нет
+./scripts/setup_github.sh --pull-secret ghcr-pull       # приватный GHCR-пакет
+```
+
+`--pull-secret` дополнительно создаёт сам секрет в кластере и требует
+`GHCR_TOKEN` (PAT с `read:packages`) и `GITHUB_USER`. Без этого флага при
+приватном пакете деплой уйдёт в `ImagePullBackOff` — job теперь проверяет
+наличие секрета и падает сразу с понятной ошибкой.
+
+> **Кнопка «Run workflow» появится только после merge в `main`.** GitHub
+> показывает ручной запуск лишь для workflow, который лежит в ветке по
+> умолчанию. Это и есть то, что делает пайплайн запускаемым одной кнопкой:
+> https://github.com/lizkakostereva-lgtm/otus-practices/pull/new/hw_09
+
 PAT не нужен: `push` и `deploy` используют автоматический `GITHUB_TOKEN`,
 который уже имеет `packages: write` для этого репозитория. Локальный
 `GHCR_TOKEN` требуется только для `make login-registry` на своей машине.
 
-Создать base64-секрет с kubeconfig:
+Создать base64-секрет с kubeconfig вручную:
 
 ```bash
-base64 -w0 ~/.kube/config-url-fraud-cluster   # macOS: base64 < file
+base64 < ~/.kube/config-url-fraud-cluster | tr -d '\n'   # macOS и Linux одинаково
 ```
 
 Job `deploy` закрыт environment `production` — добавьте туда обязательного
 ревьюера, если нужен человек в контуре.
 
-> При ручном запуске ставьте **оба** флага `push_image` и `deploy`: `deploy`
-> зависит от `push`, поэтому запуск только с `deploy=true` пропускается по
-> замыслу.
+> При ручном запуске `deploy` требует `push`: он берёт образ из
+> `needs.push.outputs.image`, поэтому запуск только с `deploy=true` пропускается
+> по замыслу. Дефолты обоих флагов — `true`, так что кнопка «Run workflow» без
+> галочек прогоняет всю цепочку: lint → test → build → push → deploy → smoke.
+> Для CI-only прогона снимите галочку `deploy`.
 
 > В языке выражений GitHub **нет** тернарного оператора `? :`. Условия вида
 > `event == 'workflow_dispatch' ? inputs.x : ...` делают невалидным весь файл
@@ -490,8 +515,8 @@ Job `deploy` закрыт environment `production` — добавьте туда
 VPC  url-fraud-net
 ├── shared egress gateway  url-fraud-nat      ← у сети default нет route table
 ├── route table            0.0.0.0/0 → gateway
-├── 3 node subnets         10.130/10.131/10.132.0.0/24  (a/b/c)
-└── 3 master subnets       10.140/10.141/10.142.0.0/24  (a/b/c)
+├── 3 node subnets         10.130/10.131/10.132.0.0/24  (a/b/d)
+└── 3 master subnets       10.140/10.141/10.142.0.0/24  (a/b/d)
 
 Managed Kubernetes  url-fraud-cluster        региональный, 3 master, k8s 1.33
 └── node group      url-fraud-workers       fixed_scale = 3, по одной на зону
@@ -624,152 +649,3 @@ curl -X POST "http://${NODE_IP}:30080/api/v1/predict" \
 
 make smoke API_BASE_URL="http://${NODE_IP}:30080"
 ```
-
-### NodePort или Load Balancer?
-
-`k8s/30-service-nodeport.yaml` выбран по умолчанию, потому что это одна строка
-и никаких дополнительных облачных ресурсов. Плата — адрес переезжает вместе с
-нодой.
-
-Для стабильного адреса с TLS и доменом используйте `k8s/40-ingress.yaml` с
-Ingress-контроллером `yandex-ingress`: он создаёт Load Balancer со статическим
-публичным IP и сертификатом.
-
-```bash
-kubectl --context url-fraud-cluster apply -f k8s/40-ingress.yaml
-kubectl --context url-fraud-cluster -n url-fraud get ingress -w
-```
-
-Сначала поправьте `host` в этом файле. Не применяйте `30-` и `40-` одновременно.
-
----
-
-## Эксплуатация
-
-```bash
-make status                       # поды, сервисы, node ports
-make logs                         # логи API
-make undeploy                     # удалить манифесты
-make tf-destroy                   # удалить кластер, VPC и всё остальное
-```
-
-Полезные однострочники:
-
-```bash
-# масштабирование
-kubectl --context url-fraud-cluster -n url-fraud scale deployment/url-fraud-api --replicas 4
-
-# что реально запущено
-kubectl --context url-fraud-cluster -n url-fraud get deployment url-fraud-api -o yaml
-
-# откат на предыдущий образ
-kubectl --context url-fraud-cluster -n url-fraud rollout undo deployment/url-fraud-api
-
-# потребление ресурсов (нужен metrics-server)
-kubectl --context url-fraud-cluster -n url-fraud top pods
-
-# включить автоскейлинг
-kubectl --context url-fraud-cluster -n url-fraud apply -f k8s/50-hpa.yaml
-
-# трафик по классам
-curl -s http://$NODE_IP:30080/metrics | grep url_fraud
-```
-
-### Что уже сделано для продакшена
-
-- `runAsNonRoot`, `readOnlyRootFilesystem`, все capabilities отброшены, seccomp
-  `RuntimeDefault` — namespace включает Pod Security Standard `restricted`,
-  поэтому под был бы отвергнут, если бы это убрали.
-- Непривилегированный пользователь `10001`, записываемый `/tmp` через `emptyDir`
-  (нужен для `readOnlyRootFilesystem`).
-- Лимита CPU нет намеренно: троттлинг добавил бы всплески латентности к
-  инференсу, который обычно занимает миллисекунды. Память ограничена 512Mi.
-- Цепочка `startupProbe` → `livenessProbe` → `readinessProbe`, поэтому медленная
-  загрузка модели не путается с мёртвым процессом, а `/readyz` не пускает
-  неготовые поды в эндпоинты Service.
-- 2 реплики, раскиданные по нодам, `maxUnavailable: 0` плюс PodDisruptionBudget.
-
-### Известные ограничения
-
-- NodePort открыт на `0.0.0.0/0`, и у API **нет аутентификации**. Для сдачи
-  домашки это нормально, для чего-либо реального — нет. Ограничьте CIDR в
-  `variables.tf` для `api_port` или используйте маршрут через Ingress.
-- Модель — классификатор URL времён 2019 года. Она судит *строки* URL, поэтому
-  не видит редиректы, содержимое страниц и только что зарегистрированные
-  домены.
-- Образ собирается под `amd64`, потому что ноды Yandex Cloud — `amd64`. На
-  Apple Silicon локальная сборка идёт через эмуляцию; для нативной скорости
-  используйте `PLATFORM=linux/arm64`, но такой образ в кластер не поедет.
-
----
-
-## Диагностика
-
-| Симптом                                     | Причина и решение                                                        |
-| ------------------------------------------- | ------------------------------------------------------------------------ |
-| `failed to connect to the docker API`       | Не запущен Docker daemon — стартуйте Docker Desktop                      |
-| `/readyz` вечно отдаёт 503                  | В образе нет `models/model.joblib`; смотрите `kubectl logs`              |
-| Поды зависли в `ImagePullBackOff`           | Неверный тег или приватный пакет без pull-секрета (`make pull-secret`)    |
-| Ноды `NotReady` сразу после apply           | Для первых 2–5 минут это нормально; идёт pull образов и настройка CNI     |
-| `CrashLoopBackOff`                          | `kubectl -n url-fraud logs deployment/url-fraud-api`                      |
-| У нод нет `ExternalIP`                      | `enable_public_ip_on_nodes = false`; пере-apply или используйте Ingress    |
-| Terraform: несовпадение версии провайдера   | `terraform init -upgrade` после правки `versions.tf`                      |
-| `Permission denied` на `yandex_kubernetes_cluster` | YC проверяет роли сервисного аккаунта кластера в момент создания. Нужны `k8s.clusters.agent` + `vpc.publicAdmin` (публичные IP) + `logging.writer` (если включён `master_logging`) — см. `service_account.tf` |
-| `Role 'container.deployer' not found`         | Такой роли нет. Реестр — это `container-registry.*`, в частности `container-registry.images.puller` |
-| `master logging require 'logging.writer' role` | Включён `master_logging`, но у master-SA нет `logging.writer`; проверьте `depends_on` в `kubernetes.tf` |
-| `The 'subnet_id' field has been deprecated`    | В `allocation_policy.location` оставьте только `zone`, подсети задавайте через `instance_template.network_interface.subnet_ids` |
-| `Cannot connect to YC tool initialization service` | Косметика: провайдер проверяет свою версию, endpoint недоступен. `make tf-plan` уже гасит это через `YC_TERRAFORM_INITIALIZATION_SILENCE=true` |
-| `yc managed-kubernetes list-versions`       | Возьмите версию, разрешённую в каталоге, и задайте `kubernetes_version`    |
-| Все acceptance-тесты пропущены              | Не задан `API_BASE_URL`                                                   |
-| NodePort не отвечает снаружи                | Файрвол VPC или корпоративные egress-правила; проверьте `curl` с мобильного интернета |
-| CI: run без единого job                      | Workflow невалиден; ищите тернарник в `if:` и проверяйте `actionlint`     |
-
----
-
-## Проектные решения
-
-**Почему NodePort?** Задание просит публично доступный API на трёх нодах.
-NodePort — самый дешёвый способ получить его, без дополнительных ресурсов
-Yandex. Вариант с Ingress приложен на случай, когда нужен стабильный IP.
-
-**Почему региональный control plane?** Три master, по одному на зону. Zonal
-control plane был бы единой точкой отказа для кластера, смысл которого как раз
-в трёх нодах.
-
-**Почему fixed scale на группе нод?** `fixed_scale = 3` делает «три ноды»
-буквально верно. Cluster autoscaling доступен как закомментированная переменная,
-но выключен по умолчанию: автоскейлинговая группа может дорасти до четырёх или
-пяти нод, что противоречит требованию.
-
-**Почему в `Makefile` задана `YC_TERRAFORM_INITIALIZATION_SILENCE=true`?**
-Провайдер `yandex` при старте опрашивает собственный сервис контроля версий
-(`api.cloud.yandex.net`). Из части сетей этот host недоступен, и провайдер
-печатает `Warning: Cannot connect to YC tool initialization service`. На
-работу это не влияет: plan считает все 18 ресурсов, все вызовы Yandex Cloud API
-проходят успешно, а `apply` создаёт инфраструктуру как обычно. Проверено
-эмпирически — переменная со значением строго `true` убирает предупреждение, а
-`1`, `yes` и `TRUE` не убирают. Сделано в `Makefile`, а не в `.tf`, чтобы
-переменная не попадала в код и её можно было отключить через
-`YC_TF_ENV= make tf-plan`.
-
-**Почему модель в git?** Это 2.9 МБ детерминированного вывода скрипта из того
-же репозитория. Коммит означает, что docker build не требует сети, тестам не
-нужен датасет, а ревьюер может воспроизвести ровно тот артефакт, который
-отдаётся, — в `metadata.json` лежит его SHA-256.
-
-**Почему без аутентификации?** Вне рамок задания. Pod Security Standard
-`restricted`, непривилегированный пользователь, read-only root filesystem и
-лимиты ресурсов на месте, чтобы добавление авторизации позже было изменением
-маршрутизации, а не проектом по hardening.
-
-**Почему `--workers 1`?** Одна модель на процесс. Реплики Deployment дают
-горизонтальное масштабирование с линейной стоимостью по памяти; потоки
-дублировали бы модель, не используя дополнительные ядра.
-
----
-
-## Лицензия / датасет
-
-Датасет принадлежит
-[faizann24/Using-machine-learning-to-detect-malicious-URLs](https://github.com/faizann24/Using-machine-learning-to-detect-malicious-URLs)
-и скачивается в момент обучения, здесь не распространяется.

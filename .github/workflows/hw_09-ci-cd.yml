@@ -35,11 +35,14 @@ on:
       push_image:
         description: "Push the image to GHCR"
         type: boolean
-        default: false
+        # Defaults are true so that the green "Run workflow" button in the UI is
+        # the whole pipeline: lint -> test -> build -> push -> deploy -> smoke.
+        # Turn them off for a CI-only verification run.
+        default: true
       deploy:
         description: "Deploy to the Kubernetes cluster"
         type: boolean
-        default: false
+        default: true
 
 # Never run two builds of the same ref at once; queue instead.
 concurrency:
@@ -262,6 +265,7 @@ jobs:
         env:
           IMAGE: ${{ needs.push.outputs.image }}
           KUBE_CONTEXT: ${{ vars.KUBE_CONTEXT }}
+          IMAGE_PULL_SECRET: ${{ vars.IMAGE_PULL_SECRET }}
         run: |
           set -euo pipefail
           CONTEXT="${KUBE_CONTEXT:-url-fraud-cluster}"
@@ -276,6 +280,24 @@ jobs:
 
           if kubectl --context "$CONTEXT" --namespace url-fraud get hpa url-fraud-api >/dev/null 2>&1; then
             kubectl --context "$CONTEXT" apply -f k8s/50-hpa.yaml
+          fi
+
+          # GHCR packages are private by default, and the Deployment ships with
+          # imagePullSecrets commented out (k8s/20-deployment.yaml). When the
+          # variable is set, patch the field in. This has to happen after every
+          # `apply`, because a declarative apply of the unmodified manifest would
+          # drop the field again.
+          #
+          # Failing loudly here beats letting the rollout time out on
+          # ImagePullBackOff three minutes later.
+          if [ -n "${IMAGE_PULL_SECRET:-}" ]; then
+            kubectl --context "$CONTEXT" --namespace url-fraud \
+              get secret "$IMAGE_PULL_SECRET" >/dev/null \
+              || { echo "::error::pull secret '$IMAGE_PULL_SECRET' not found in namespace url-fraud"; exit 1; }
+            kubectl --context "$CONTEXT" --namespace url-fraud \
+              patch deployment url-fraud-api --type=strategic \
+              -p "{\"spec\":{\"template\":{\"spec\":{\"imagePullSecrets\":[{\"name\":\"${IMAGE_PULL_SECRET}\"}]}}}}"
+            echo "imagePullSecrets: $IMAGE_PULL_SECRET"
           fi
 
       - name: Rollout status
