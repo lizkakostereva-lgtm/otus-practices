@@ -15,7 +15,7 @@ token = ""
 cluster_name = "url-fraud-cluster"
 environment  = "production"
 
-zones               = ["ru-central1-a", "ru-central1-b", "ru-central1-c"]
+zones               = ["ru-central1-a", "ru-central1-b", "ru-central1-d"]
 network_cidr_blocks = ["10.130.0.0/24", "10.131.0.0/24", "10.132.0.0/24"]
 zone                = "ru-central1-a"
 

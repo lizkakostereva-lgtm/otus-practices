@@ -98,7 +98,7 @@ output "smoke_command" {
 output "get_kubeconfig_command" {
   description = "Command that writes a kubeconfig for this cluster."
   value = format(
-    "yc managed-kubernetes cluster get-kubeconfig --name %s --region ru-central1 > ~/.kube/config-url-fraud",
+    "make kubeconfig   # или напрямую: yc managed-kubernetes cluster get-credentials --name %s --region ru-central1 --format yaml > ~/.kube/config-url-fraud-cluster",
     yandex_kubernetes_cluster.main.name,
   )
 }

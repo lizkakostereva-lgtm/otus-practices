@@ -35,7 +35,7 @@ variable "environment" {
 variable "zones" {
   description = "Availability zones for the cluster nodes. One subnet per zone."
   type        = list(string)
-  default     = ["ru-central1-a", "ru-central1-b", "ru-central1-c"]
+  default     = ["ru-central1-a", "ru-central1-b", "ru-central1-d"]
 }
 
 variable "network_cidr_blocks" {

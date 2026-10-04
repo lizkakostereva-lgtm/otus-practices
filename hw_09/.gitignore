@@ -11,6 +11,10 @@ data/*
 *.tfstate
 *.tfstate.*
 *.tfvars
+# a stray backup or a saved plan would carry the IAM token from terraform.tfvars
+*.bak
+*.tfplan
+*.tf.plan
 crash.log
 
 # Local overrides

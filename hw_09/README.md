@@ -1,10 +1,10 @@
-# hw_09 — Malicious URL Classifier REST API
+# hw_09 — REST API классификатора вредоносных URL
 
-Production-shaped ML service: a scikit-learn classifier behind a FastAPI REST
-API, containerised, pushed to GHCR, deployed to a 3-node Managed Kubernetes
-cluster in Yandex Cloud, and reachable from the internet.
+ML-сервис production-уровня: классификатор на scikit-learn за REST API на
+FastAPI, упакованный в контейнер, выложенный в GHCR, задеплоенный в
+3-узловый Managed Kubernetes в Yandex Cloud и доступный из интернета.
 
-The model answers one question: **is this URL malicious?**
+Модель отвечает на один вопрос: **вредоносный ли этот URL?**
 
 ```
 $ curl -X POST http://<node-ip>:30080/api/v1/predict \
@@ -26,37 +26,37 @@ $ curl -X POST http://<node-ip>:30080/api/v1/predict \
 
 ---
 
-## Table of contents
+## Содержание
 
-1. [What is inside](#what-is-inside)
-2. [Quick start](#quick-start)
-3. [API reference](#api-reference)
-4. [Configuration](#configuration)
-5. [Model and metrics](#model-and-metrics)
-6. [Tests](#tests)
+1. [Что внутри](#что-внутри)
+2. [Быстрый старт](#быстрый-старт)
+3. [Справочник API](#справочник-api)
+4. [Конфигурация](#конфигурация)
+5. [Модель и метрики](#модель-и-метрики)
+6. [Тесты](#тесты)
 7. [Docker](#docker)
 8. [CI/CD](#cicd)
-9. [Deploy to Yandex Cloud](#deploy-to-yandex-cloud)
-10. [Operations](#operations)
-11. [Troubleshooting](#troubleshooting)
-12. [Design decisions](#design-decisions)
+9. [Деплой в Yandex Cloud](#деплой-в-yandex-cloud)
+10. [Эксплуатация](#эксплуатация)
+11. [Диагностика](#диагностика)
+12. [Проектные решения](#проектные-решения)
 
 ---
 
-## What is inside
+## Что внутри
 
 ```
 hw_09/
 ├── app/
 │   ├── __init__.py
-│   ├── config.py          # pydantic-settings, all env vars in one place
-│   ├── main.py            # FastAPI app, routes, middleware, lifespan
-│   ├── predictor.py       # lazy singleton model holder + metadata
-│   ├── schemas.py         # request/response contract + URL validation
-│   └── train.py           # training script, writes model + metadata
+│   ├── config.py          # pydantic-settings, все env-переменные в одном месте
+│   ├── main.py            # приложение FastAPI, роуты, middleware, lifespan
+│   ├── predictor.py       # ленивый singleton с моделью + метаданные
+│   ├── schemas.py         # контракт запрос/ответ + валидация URL
+│   └── train.py           # скрипт обучения, пишет модель и метаданные
 ├── models/
-│   ├── model.joblib       # the trained pipeline (COMMITTED on purpose)
-│   └── metadata.json      # params, metrics, threshold, artifact sha256
+│   ├── model.joblib       # обученный пайплайн (намеренно в git)
+│   └── metadata.json      # параметры, метрики, threshold, sha256 артефакта
 ├── tests/
 │   ├── conftest.py
 │   ├── test_config.py
@@ -64,59 +64,59 @@ hw_09/
 │   ├── test_predictor.py
 │   ├── test_schemas.py
 │   ├── test_train.py
-│   └── test_acceptance_live.py   # skipped unless API_BASE_URL is set
+│   └── test_acceptance_live.py   # пропускаются, если не задан API_BASE_URL
 ├── k8s/
 │   ├── 00-namespace.yaml
 │   ├── 10-configmap.yaml
 │   ├── 20-deployment.yaml
 │   ├── 30-service-nodeport.yaml
-│   ├── 40-ingress.yaml          # optional: Load Balancer instead of NodePort
+│   ├── 40-ingress.yaml          # опционально: Load Balancer вместо NodePort
 │   ├── 50-hpa.yaml
 │   ├── 60-pdb.yaml
 │   └── kustomization.yaml
 ├── terraform/
-│   ├── versions.tf        # provider pin
+│   ├── versions.tf        # фиксация версии провайдера
 │   ├── providers.tf
 │   ├── variables.tf
 │   ├── locals.tf
-│   ├── network.tf         # VPC, shared egress NAT, 3+3 subnets, SGs
-│   ├── service_account.tf # control-plane and node service accounts
-│   ├── kubernetes.tf      # Managed Kubernetes + 3-node group
+│   ├── network.tf         # VPC, общий egress NAT, 3+3 подсети, SG
+│   ├── service_account.tf # сервис-аккаунты control plane и нод
+│   ├── kubernetes.tf      # Managed Kubernetes + группа из 3 нод
 │   ├── outputs.tf
 │   └── terraform.tfvars.example
 ├── scripts/
 │   ├── get_kubeconfig.sh
 │   ├── create_image_pull_secret.sh
 │   ├── deploy_k8s.sh
-│   └── smoke_test.sh      # 24 end-to-end checks against a live instance
-├── .github/workflows/     # (repo root) hw_09-ci-cd.yml
-├── Dockerfile             # multi-stage, non-root, healthchecked
-├── docker-compose.yml     # local-only stack
-├── Makefile               # every command used below
-├── pyproject.toml         # pytest + ruff configuration
-├── requirements.txt       # pinned runtime dependencies
+│   └── smoke_test.sh      # 24 сквозные проверки живого инстанса
+├── .github/workflows/     # (в корне репозитория) hw_09-ci-cd.yml
+├── Dockerfile             # multi-stage, не root, с healthcheck
+├── docker-compose.yml     # стек только для локалки
+├── Makefile               # все команды из этого документа
+├── pyproject.toml         # настройки pytest + ruff
+├── requirements.txt       # зафиксированные runtime-зависимости
 └── requirements-dev.txt   # pytest, coverage, httpx, ruff
 ```
 
 ---
 
-## Quick start
+## Быстрый старт
 
-Requirements: Python 3.12, Docker (for the container path), `yc` CLI and
-Terraform 1.5+ (only for the cloud path).
+Требования: Python 3.12, Docker (для контейнерного пути), CLI `yc` и
+Terraform 1.5+ (только для облачного пути).
 
 ```bash
 cd hw_09
 
-# 1. Virtualenv with pinned dependencies
+# 1. Virtualenv с зафиксированными зависимостями
 make install
 
-# 2. Run the API on http://127.0.0.1:8000
+# 2. Запустить API на http://127.0.0.1:8000
 make run
 ```
 
-The model artifact is committed, so there is nothing to train and nothing to
-download for a first run. In a second terminal:
+Артефакт модели лежит в git, поэтому для первого запуска ничего не надо ни
+обучать, ни скачивать. Во втором терминале:
 
 ```bash
 curl http://127.0.0.1:8000/health
@@ -125,11 +125,11 @@ curl -X POST http://127.0.0.1:8000/api/v1/predict \
   -H 'Content-Type: application/json' \
   -d '{"url":"upstreams.info/wp-admin/includes/inst.exe"}'
 
-# Open the interactive docs
+# Открыть интерактивную документацию
 open http://127.0.0.1:8000/docs
 ```
 
-Equivalent manual setup, if you prefer no Make:
+Эквивалентная ручная настройка, если Make не нужен:
 
 ```bash
 python3 -m venv .venv
@@ -138,57 +138,57 @@ pip install -r requirements-dev.txt
 uvicorn app.main:app --reload
 ```
 
-### Retraining
+### Переобучение
 
-The dataset is **not** committed (22 MB). Download it once, then train:
+Датасет **не** коммитится (22 МБ). Скачайте один раз, затем обучите:
 
 ```bash
-make download-data          # -> data/urls.csv (gitignored)
-make train                  # rewrites models/model.joblib + metadata.json
-make retrain-check          # same, but fails if F1 < 0.70 or AUC < 0.90
+make download-data          # -> data/urls.csv (в .gitignore)
+make train                  # перезапишет models/model.joblib + metadata.json
+make retrain-check          # то же, но падает при F1 < 0.70 или AUC < 0.90
 ```
 
-Training the full 25% sample takes ~8 s on 2 cores and is deterministic
-(`random_state=42`), so the metrics below reproduce exactly.
+Обучение на 25% выборки занимает ~8 с на 2 ядрах и полностью детерминировано
+(`random_state=42`), поэтому метрики ниже воспроизводятся точно.
 
 ---
 
-## API reference
+## Справочник API
 
-| Method | Path                       | Purpose                                     |
-| ------ | -------------------------- | ------------------------------------------- |
-| GET    | `/`                        | Service banner and endpoint index           |
-| GET    | `/health`                  | Health JSON, including `model_loaded`       |
-| GET    | `/healthz`                 | Liveness, 200 once the process is up        |
-| GET    | `/readyz`                  | Readiness, **503 until the model is loaded** |
-| POST   | `/api/v1/predict`          | Classify one URL                            |
-| POST   | `/api/v1/predict/batch`    | Classify up to 100 URLs                     |
-| GET    | `/api/v1/model/info`       | Model version, params, metrics, threshold   |
-| GET    | `/metrics`                 | Prometheus metrics                          |
-| GET    | `/docs`, `/redoc`          | Swagger UI / ReDoc                          |
-| GET    | `/openapi.json`            | OpenAPI schema                              |
+| Метод | Путь                       | Назначение                                    |
+| ------ | -------------------------- | --------------------------------------------- |
+| GET    | `/`                        | Баннер сервиса и индекс эндпоинтов            |
+| GET    | `/health`                  | Health JSON, включая `model_loaded`            |
+| GET    | `/healthz`                 | Liveness, 200 как только процесс поднялся     |
+| GET    | `/readyz`                  | Readiness, **503 пока модель не загружена**    |
+| POST   | `/api/v1/predict`          | Классифицировать один URL                      |
+| POST   | `/api/v1/predict/batch`    | Классифицировать до 100 URL                    |
+| GET    | `/api/v1/model/info`       | Версия модели, параметры, метрики, threshold   |
+| GET    | `/metrics`                 | Метрики Prometheus                             |
+| GET    | `/docs`, `/redoc`          | Swagger UI / ReDoc                             |
+| GET    | `/openapi.json`            | Схема OpenAPI                                  |
 
-Every response carries an `X-Request-ID` header; the same id is echoed in the
-`request_id` field of prediction responses.
+Каждый ответ содержит заголовок `X-Request-ID`; тот же id возвращается в поле
+`request_id` ответов предсказания.
 
 ### POST /api/v1/predict
 
-Request:
+Запрос:
 
 ```jsonc
 {
-  "url": "upstreams.info/wp-admin/includes/inst.exe",  // required
-  "threshold": 0.55                                    // optional, 0.0–1.0
+  "url": "upstreams.info/wp-admin/includes/inst.exe",  // обязательно
+  "threshold": 0.55                                    // опционально, 0.0–1.0
 }
 ```
 
-Response:
+Ответ:
 
 ```jsonc
 {
   "prediction": {
     "url": "http://upstreams.info/wp-admin/includes/inst.exe",
-    "label": "bad",          // raw model class
+    "label": "bad",          // сырой класс модели
     "is_fraud": true,        // probability >= threshold
     "probability": 0.9085,
     "threshold": 0.55,
@@ -198,12 +198,12 @@ Response:
 }
 ```
 
-**URL normalisation.** The training set stores bare hostnames, so a missing
-scheme is not an error — `docs.python.org` becomes `http://docs.python.org`.
-Schemes other than `http`/`https` are rejected with 422, as are empty hosts,
-hosts containing whitespace, and anything longer than `MAX_URL_LENGTH`.
-`user:pass@` is stripped before scoring, because the classifier only looks at
-the authority and the path.
+**Нормализация URL.** В обучающей выборке лежат голые доменные имена, поэтому
+отсутствие схемы — не ошибка: `docs.python.org` превращается в
+`http://docs.python.org`. Схемы кроме `http`/`https` отклоняются с 422, как и
+пустой хост, хост с пробелами и всё, что длиннее `MAX_URL_LENGTH`.
+`user:pass@` отбрасывается до скоринга, потому что классификатор смотрит
+только на authority и путь.
 
 ### POST /api/v1/predict/batch
 
@@ -215,19 +215,19 @@ curl -X POST http://127.0.0.1:8000/api/v1/predict/batch \
 
 ```jsonc
 {
-  "predictions": [ /* one object per input, same shape as above */ ],
+  "predictions": [ /* по объекту на вход, та же форма что выше */ ],
   "count": 2,
   "request_id": "…"
 }
 ```
 
-Batches are limited to `MAX_BATCH_SIZE` (100) entries. The whole batch is
-rejected if any single URL is invalid, so the response never mixes successes
-and failures.
+Батч ограничен `MAX_BATCH_SIZE` (100) записями. Весь батч отклоняется, если
+хоть один URL невалиден, поэтому в ответе никогда не смешиваются успехи и
+ошибки.
 
-### Errors
+### Ошибки
 
-Non-2xx responses use a uniform body:
+Ответы с кодом не 2xx имеют единое тело:
 
 ```jsonc
 {
@@ -237,43 +237,43 @@ Non-2xx responses use a uniform body:
 }
 ```
 
-| Status | When                                                          |
-| ------ | ------------------------------------------------------------- |
-| 422    | Invalid URL, batch too large, threshold outside 0–1           |
-| 404    | Unknown path                                                  |
-| 500    | Unexpected server error; the `request_id` appears in the logs |
-| 503    | `/readyz` only, while the model is still loading              |
+| Код   | Когда                                                             |
+| ----- | ----------------------------------------------------------------- |
+| 422   | Некорректный URL, батч слишком большой, threshold вне 0–1         |
+| 404   | Неизвестный путь                                                  |
+| 500   | Непредвиденная серверная ошибка; `request_id` попадёт в логи      |
+| 503   | Только `/readyz`, пока модель ещё грузится                        |
 
 ---
 
-## Configuration
+## Конфигурация
 
-Every setting is an environment variable. Defaults are in `app/config.py`, and
-`k8s/10-configmap.yaml` holds the production values.
+Все настройки — переменные окружения. Значения по умолчанию в
+`app/config.py`, боевые — в `k8s/10-configmap.yaml`.
 
-| Variable                 | Default                     | Meaning                                              |
-| ------------------------ | --------------------------- | ---------------------------------------------------- |
-| `LOG_LEVEL`              | `INFO`                      | Root log level                                       |
-| `ENVIRONMENT`            | `production`                | Free-form environment label                          |
-| `SERVICE_NAME`           | `url-fraud-api`             | Reported by `/` and `/health`                        |
-| `ENABLE_METRICS`         | `true`                      | Serve `/metrics`                                     |
-| `TRAIN_ON_STARTUP`       | `false`                     | Train if the artifact is missing (local convenience) |
-| `MODEL_PATH`             | `models/model.joblib`       | Pipeline location                                    |
-| `MODEL_METADATA_PATH`    | `models/metadata.json`      | Metadata location                                    |
-| `DEFAULT_THRESHOLD`      | *(empty)*                   | Overrides the metadata threshold when set            |
-| `MAX_BATCH_SIZE`         | `100`                       | Max URLs per batch                                   |
-| `MAX_URL_LENGTH`         | `2048`                      | Max normalised URL length                            |
-| `CORS_ORIGINS`           | `*`                         | Comma-separated origins, or `*`                      |
-| `RANDOM_SEED`            | `42`                        | Seed for anything stochastic                         |
+| Переменная             | По умолчанию              | Назначение                                          |
+| ---------------------- | ------------------------- | --------------------------------------------------- |
+| `LOG_LEVEL`            | `INFO`                    | Уровень логов корневого логгера                     |
+| `ENVIRONMENT`          | `production`              | Метка окружения                                      |
+| `SERVICE_NAME`         | `url-fraud-api`           | Возвращается в `/` и `/health`                       |
+| `ENABLE_METRICS`       | `true`                    | Отдавать ли `/metrics`                               |
+| `TRAIN_ON_STARTUP`     | `false`                   | Обучать, если артефакта нет (удобство для локалки)   |
+| `MODEL_PATH`           | `models/model.joblib`     | Путь к пайплайну                                     |
+| `MODEL_METADATA_PATH`  | `models/metadata.json`    | Путь к метаданным                                    |
+| `DEFAULT_THRESHOLD`    | *(пусто)*                 | Переопределяет threshold из метаданных, если задан   |
+| `MAX_BATCH_SIZE`       | `100`                     | Максимум URL в батче                                 |
+| `MAX_URL_LENGTH`       | `2048`                    | Максимальная длина нормализованного URL              |
+| `CORS_ORIGINS`         | `*`                       | Origins через запятую, либо `*`                      |
+| `RANDOM_SEED`          | `42`                      | Сид для всего, что случайно                          |
 
-**Threshold precedence.** The threshold baked into `models/metadata.json`
-(`0.55`, chosen by maximising F1 on the held-out split) is used unless
-`DEFAULT_THRESHOLD` is set. Per-request `threshold` wins over both. This keeps
-the deployed default sane without needing a redeploy to tune it.
+**Приоритет threshold.** Берётся threshold из `models/metadata.json`
+(`0.55`, выбран максимизацией F1 на отложенной выборке), если не задан
+`DEFAULT_THRESHOLD`. `threshold` в конкретном запросе приоритетнее обоих.
+Так разумный дефолт не требует редеплоя для тюнинга.
 
 ---
 
-## Model and metrics
+## Модель и метрики
 
 ```
 CountVectorizer(analyzer="char", ngram_range=(1, 3), min_df=2)
@@ -281,51 +281,53 @@ CountVectorizer(analyzer="char", ngram_range=(1, 3), min_df=2)
                             min_samples_leaf=2, class_weight="balanced")
 ```
 
-Character n-grams rather than word tokens: malicious URLs are mostly
-homoglyphs, odd TLDs and path noise (`wp-admin/includes/inst.exe`), and a linear
-model over char 1–3-grams captures that signal with no preprocessing at all.
+Символьные n-граммы, а не слова-токены: вредоносные URL — это в основном
+гомоглифы, странные TLD и мусор в пути (`wp-admin/includes/inst.exe`), и
+линейная модель по char 1–3-граммам ловит этот сигнал вообще без
+предобработки.
 
-Trained on a 25% sample of
+Обучено на 25% выборки
 [faizann24/Using-machine-learning-to-detect-malicious-URLs](https://github.com/faizann24/Using-machine-learning-to-detect-malicious-URLs)
-(420,464 rows, labels `bad`/`good`), split 80/20 stratified:
+(420 464 строки, метки `bad`/`good`), разбиение 80/20 со стратификацией:
 
-| Metric    | Value   |
-| --------- | ------- |
-| Accuracy  | 0.9233  |
-| Precision | 0.7962  |
-| Recall    | 0.7078  |
-| F1        | 0.7494  |
-| ROC AUC   | 0.9473  |
-| Threshold | 0.55    |
-| Features  | 55,392  |
+| Метрика    | Значение |
+| ---------- | -------- |
+| Accuracy   | 0.9233   |
+| Precision  | 0.7962   |
+| Recall     | 0.7078   |
+| F1         | 0.7494   |
+| ROC AUC    | 0.9473   |
+| Threshold  | 0.55     |
+| Признаки   | 55 392   |
 
-82,249 train / 20,563 test rows, 16.2% positives. AUC is the number to watch:
-ranking quality is high, and the threshold is what trades precision for recall.
+82 249 train / 20 563 test строк, 16.2% положительных. Следить нужно за AUC:
+качество ранжирования высокое, а threshold — это как раз тот рычаг, который
+меняет precision на recall.
 
-The error profile is the interesting part, and it is measured, not guessed.
-Scoring 20,000 held-out legitimate URLs gives:
+Профиль ошибок — самое интересное, и он измерен, а не прикинут. На 20 000
+легитимных URL из отложенной выборки:
 
-| Threshold | False-positive rate on legitimate URLs |
-| --------- | ------------------------------------- |
-| 0.55      | 8.0%                                  |
-| 0.50      | 15.2%                                 |
-| 0.40      | 59.4%                                 |
+| Threshold | Доля ложных срабатываний на легитимных URL |
+| --------- | ------------------------------------------ |
+| 0.55      | 8.0%                                       |
+| 0.50      | 15.2%                                      |
+| 0.40      | 59.4%                                      |
 
-At the deployed threshold the trade is 70.8% recall for 8% false positives —
-reasonable for a triage queue that a human clears. The cliff between 0.50 and
-0.40 is the thing to be careful with: at 0.50 roughly half of all legitimate
-URLs are flagged, because the model puts a lot of mass just above 0.5. Lower
-the threshold only if you understand that.
+На деплоенном threshold получается 70.8% recall при 8% ложных срабатываний —
+разумно для очереди на ручной разбор. Обрыв между 0.50 и 0.40 — вот о чём
+стоит помнить: при 0.50 помечается примерно половина всех легитимных URL,
+потому что модель держит много массы чуть выше 0.5. Снижайте threshold, только
+если понимаете, чем за это платите.
 
-The same model has an amusing failure mode worth knowing about:
-`docs.python.org` scores **0.6392** and is therefore flagged as fraud at the
-default threshold. Short, clean hostnames with unfamiliar TLDs look like
-phishing to a char-n-gram model trained on 2019 data. `github.com/faizann24`
-scores 0.4984 and passes only just.
+У той же модели есть забавный известный случай провала:
+`docs.python.org` набирает **0.6392** и потому помечается как фрод при
+дефолтном threshold. Короткие чистые хосты с непривычными TLD выглядят для
+char-n-gram модели на данных 2019 года как фишинг. `github.com/faizann24`
+набирает 0.4984 и проходит впритык.
 
-`GET /api/v1/model/info` returns all of this at runtime, plus the SHA-256 of the
-exact `model.joblib` being served, so you can prove which artifact a pod is
-running:
+`GET /api/v1/model/info` возвращает всё это в рантайме, а также SHA-256
+конкретного `model.joblib`, который отдаётся, — так можно доказать, какой
+артефакт крутится в поде:
 
 ```bash
 curl -s http://127.0.0.1:8000/api/v1/model/info | python3 -m json.tool
@@ -333,28 +335,28 @@ curl -s http://127.0.0.1:8000/api/v1/model/info | python3 -m json.tool
 
 ---
 
-## Tests
+## Тесты
 
 ```bash
 make test          # 57 passed, 9 skipped
-make coverage      # HTML report in htmlcov/index.html
+make coverage      # HTML-отчёт в htmlcov/index.html
 make lint          # ruff check + format --check
-make check         # both
+make check         # и то и другое
 ```
 
-The suite is hermetic: it builds a tiny synthetic pipeline in a fixture, so it
-needs no network, no dataset, and runs in under a second.
+Набор герметичный: в фикстуре собирается маленький синтетический пайплайн,
+поэтому тестам не нужны ни сеть, ни датасет, и они проходят меньше чем за
+секунду.
 
-The 9 skipped tests are the live acceptance suite. They activate when
-`API_BASE_URL` is set:
+9 пропущенных тестов — это live-набор приёмки. Он включается, когда задан
+`API_BASE_URL`:
 
 ```bash
 make acceptance API_BASE_URL=http://<node-ip>:30080
 ```
 
-For a dependency-free end-to-end check of a running instance (health, both
-prediction polarities, URL normalisation, batch, validation, docs, metrics —
-24 assertions):
+Для сквозной проверки без зависимостей (health, оба класса предсказания,
+нормализация URL, батч, валидация, docs, метрики — 24 ассерта):
 
 ```bash
 make smoke API_BASE_URL=http://<node-ip>:30080
@@ -366,11 +368,11 @@ make smoke API_BASE_URL=http://<node-ip>:30080
 
 ```bash
 make build          # docker build
-make run-docker     # run on http://127.0.0.1:8000
-make smoke-local    # 24 checks against the container
+make run-docker     # запуск на http://127.0.0.1:8000
+make smoke-local    # 24 проверки контейнера
 ```
 
-Or with compose:
+Или через compose:
 
 ```bash
 make compose-up
@@ -378,41 +380,50 @@ curl http://127.0.0.1:8000/health
 make compose-down
 ```
 
-Image design:
+Устройство образа:
 
-- **Multi-stage.** Dependencies are built into `/opt/venv` in a builder stage
-  and copied into a clean runtime stage; no compiler toolchain ships.
-- **Non-root.** Runs as uid/gid `10001`.
-- **Pinned deps.** `requirements.txt` uses `==` so the image is reproducible.
-- **Artifact baked in.** `models/model.joblib` is committed and copied into the
-  image, so a pull never needs PyPI or a dataset.
-- **Python 3.12**, matching the interpreter that produced the pickle.
-- **One worker per container.** Concurrency comes from the Deployment's
-  replicas, not `--workers` — threads inside one process would only add
-  GIL contention and duplicate the 3 MB model in memory.
-- **Healthcheck** against `/readyz`, mirroring the k8s probes.
+- **Multi-stage.** Зависимости собираются в `/opt/venv` на стадии билдера и
+  копируются в чистую рантайм-стадию; тулчейн компиляции в образ не едет.
+- **Не root.** Работает под uid/gid `10001`.
+- **Зафиксированные зависимости.** `requirements.txt` на `==`, поэтому образ
+  воспроизводим.
+- **Артефакт внутри.** `models/model.joblib` лежит в git и копируется в образ,
+  поэтому pull не требует ни PyPI, ни датасета.
+- **Python 3.12** — тот же интерпретатор, который создал pickle.
+- **Один воркер на контейнер.** Параллелизм берётся репликами Deployment, а не
+  `--workers` — потоки внутри одного процесса дали бы только конкуренцию за GIL
+  и продублировали бы модель на 3 МБ в памяти.
+- **Healthcheck** на `/readyz`, повторяет k8s-пробы.
 
-### Push to GHCR
-
-The GHCR owner is derived from the `origin` remote, so no variables are needed:
+Образ собирается под `linux/amd64` (платформа нод Yandex Cloud). На Apple
+Silicon для локальных запусков можно переопределить:
 
 ```bash
-echo $GITHUB_USER   # -> lizkakostereva-lgtm (shown by `make -n push`)
-make login-registry # docker login ghcr.io, reads GHCR_USER / GHCR_TOKEN
-make push           # -> ghcr.io/lizkakostereva-lgtm/url-fraud-api:<sha>
+make build PLATFORM=linux/arm64
 ```
 
-Override explicitly if needed: `make push IMAGE_TAG=1.0.0 GITHUB_OWNER=my-org`.
+### Пуш в GHCR
 
-> Make the package **public** in the GitHub UI (package → Settings → General →
-> Change visibility) and no `imagePullSecret` is needed. If you keep it private,
-> create the secret first — see [Operations](#operations).
+Владелец в GHCR берётся из remote `origin`, так что переменные не нужны:
+
+```bash
+make -n push          # покажет ghcr.io/lizkakostereva-lgtm/url-fraud-api:<sha>
+make login-registry   # docker login ghcr.io, читает GITHUB_USER / GHCR_TOKEN
+make push
+```
+
+Переопределить при необходимости: `make push IMAGE_TAG=1.0.0
+GITHUB_OWNER=my-org`.
+
+> Сделайте пакет **public** в UI GitHub (package → Settings → General →
+> Change visibility), и тогда `imagePullSecret` не понадобится. Если оставить
+> приватным — создайте секрет заранее, см. [Эксплуатация](#эксплуатация).
 
 ---
 
 ## CI/CD
 
-`.github/workflows/hw_09-ci-cd.yml` (repo root) runs five jobs:
+`.github/workflows/hw_09-ci-cd.yml` (в корне репозитория) состоит из пяти jobs:
 
 ```
 lint ─┐
@@ -420,142 +431,150 @@ lint ─┐
 test ─┘
 ```
 
-| Job     | Trigger                                                     | What it does                                                              |
-| ------- | ----------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `lint`  | PR, push to `main`, tag, manual                              | `ruff check` + `ruff format --check`                                       |
-| `test`  | same                                                        | `pytest` with coverage, then a small-sample retrain as a regression guard   |
-| `build` | after both                                                  | `docker buildx` build, then boot the image and call the API inside it       |
-| `push`  | `main`, `v*` tags, or manual with `push_image=true`          | Build and push to GHCR with `branch`, `sha`, `latest` and semver tags      |
-| `deploy`| `v*` tags, or manual with `deploy=true`                      | Apply the k8s manifests, wait for rollout, run the smoke test             |
+| Job      | Триггер                                              | Что делает                                                                   |
+| -------- | ---------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `lint`   | PR, push в `main`, тег, ручной запуск                | `ruff check` + `ruff format --check`                                         |
+| `test`   | то же                                                | `pytest` с coverage, затем ре-обучение на малой выборке как защита от регрессий |
+| `build`  | после обоих                                          | `docker buildx` build, затем запуск образа и вызов API внутри него            |
+| `push`   | `main`, теги `v*` или ручной запуск с `push_image`  | Сборка и пуш в GHCR с тегами `branch`, `sha`, `latest` и semver               |
+| `deploy` | теги `v*` или ручной запуск с `deploy=true`          | Применение k8s-манифестов, ожидание rollout, прогон smoke-теста               |
 
-`build` deliberately boots the container and calls `/api/v1/predict` before
-anything is pushed, so a broken image never reaches the registry.
+`build` намеренно поднимает контейнер и дёргает `/api/v1/predict` до того, как
+что-то попадёт в реестр, чтобы сломанный образ туда не доехал.
 
-### Required GitHub configuration
+Пайплайн срабатывает только на PR, push в `main`, тегах `v*` и ручном запуске —
+**просто push в feature-ветку его не запустит**.
+
+### Что нужно настроить в GitHub
 
 Repository **Settings → Secrets and variables → Actions**:
 
-| Name                | Kind   | Needed for                                          |
-| ------------------- | ------ | --------------------------------------------------- |
-| `KUBECONFIG`        | secret | `deploy` — base64 of the cluster kubeconfig         |
-| `KUBE_CONTEXT`      | var    | context name, default `url-fraud-cluster`           |
-| `IMAGE_PULL_SECRET` | var    | name of the existing pull secret, if the package is private |
+| Имя                | Тип     | Зачем                                                  |
+| ------------------ | ------- | ------------------------------------------------------ |
+| `KUBECONFIG`       | secret  | `deploy` — base64 kubeconfig кластера                  |
+| `KUBE_CONTEXT`     | var     | Имя контекста, по умолчанию `url-fraud-cluster`        |
+| `IMAGE_PULL_SECRET`| var     | Имя существующего pull-секрета, если пакет приватный   |
 
-No PAT is needed: `push` and `deploy` use the workflow's automatic
-`GITHUB_TOKEN`, which already carries `packages: write` for this repository.
-A local `GHCR_TOKEN` is only required for `make login-registry` on your laptop.
+PAT не нужен: `push` и `deploy` используют автоматический `GITHUB_TOKEN`,
+который уже имеет `packages: write` для этого репозитория. Локальный
+`GHCR_TOKEN` требуется только для `make login-registry` на своей машине.
 
-Create the base64 kubeconfig secret with:
+Создать base64-секрет с kubeconfig:
 
 ```bash
 base64 -w0 ~/.kube/config-url-fraud-cluster   # macOS: base64 < file
 ```
 
-The `deploy` job is gated on a `production` environment, so add a required
-reviewer there if you want a human in the loop.
+Job `deploy` закрыт environment `production` — добавьте туда обязательного
+ревьюера, если нужен человек в контуре.
 
-> Manual runs: set **both** `push_image` and `deploy` — `deploy` depends on
-> `push`, so a run with only `deploy=true` is skipped by design.
+> При ручном запуске ставьте **оба** флага `push_image` и `deploy`: `deploy`
+> зависит от `push`, поэтому запуск только с `deploy=true` пропускается по
+> замыслу.
+
+> В языке выражений GitHub **нет** тернарного оператора `? :`. Условия вида
+> `event == 'workflow_dispatch' ? inputs.x : ...` делают невалидным весь файл
+> workflow: GitHub создаёт «run» с именем-путем файла и нулём jobs. Проверяйте
+> локально: `actionlint .github/workflows/hw_09-ci-cd.yml`.
 
 ---
 
-## Deploy to Yandex Cloud
+## Деплой в Yandex Cloud
 
-The deployment is Terraform for the cluster plus plain manifests for the app.
-**This creates billable resources** — the destroy command at the end removes
-them.
+Кластер создаётся Terraform, приложение деплоится обычными манифестами.
+**Это создаёт платные ресурсы** — команда destroy в конце их удалит.
 
-### What gets created
+### Что создаётся
 
 ```
 VPC  url-fraud-net
-├── shared egress gateway  url-fraud-nat      ← the default network has no route
+├── shared egress gateway  url-fraud-nat      ← у сети default нет route table
 ├── route table            0.0.0.0/0 → gateway
 ├── 3 node subnets         10.130/10.131/10.132.0.0/24  (a/b/c)
 └── 3 master subnets       10.140/10.141/10.142.0.0/24  (a/b/c)
 
-Managed Kubernetes  url-fraud-cluster        regional, 3 masters, k8s 1.33
-└── node group      url-fraud-workers       fixed_scale = 3, one per zone
+Managed Kubernetes  url-fraud-cluster        региональный, 3 master, k8s 1.33
+└── node group      url-fraud-workers       fixed_scale = 3, по одной на зону
     ├── security group  SSH(22), kubelet, self, egress
-    └── NAT on every node                   ← required for the NodePort endpoint
+    └── NAT на каждой ноде                 ← обязательно для NodePort-эндпоинта
 ```
 
-A dedicated network, rather than the shared `default` one, because those
-subnets have no route table: nodes would get no egress and could not pull the
-image from GHCR.
+Выделенная сеть вместо общей `default`, потому что у тех подсетей нет route
+table: ноды остались бы без egress и не смогли бы стянуть образ из GHCR.
 
-### Step 1 — authenticate
+### Шаг 1 — аутентификация
 
 ```bash
-yc init     # interactive; or: export YC_TOKEN=$(yc iam create-token)
+yc init     # интерактивно; либо: export YC_TOKEN=$(yc iam create-token)
 yc version
 ```
 
-> `yc config list` prints your IAM token in clear text — handy for checking the
-> cloud/folder IDs, but do not paste its output into a chat or an issue.
+> `yc config list` печатает ваш IAM-токен открытым текстом — удобно, чтобы
+> посмотреть ID облака и каталога, но не вставляйте этот вывод в чат или задачу.
 
-### Step 2 — configure Terraform
+### Шаг 2 — настройка Terraform
 
 ```bash
 cd terraform
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Edit it, or pass the values inline:
+Правьте файл или передавайте значения инлайном:
 
 ```bash
-# cloud and folder IDs (this CLI has no top-level `yc cloud`/`yc zone`)
+# ID облака и каталога (в этом CLI нет верхнеуровневых `yc cloud`/`yc zone`)
 yc resource-manager cloud list
 yc resource-manager folder list
 
-# compute zones and available Kubernetes versions
+#compute-зоны и доступные версии Kubernetes
 yc compute zone list
 yc managed-kubernetes list-versions
 ```
 
-`terraform.tfvars.example` already carries the cloud/folder IDs for this
-account, so a plain `cp` + `make tf-init` is enough. Confirm the zone list
-contains `ru-central1-a`, `-b` and `-c` before applying.
+В `terraform.tfvars.example` уже проставлены ID облака и каталога этого
+аккаунта, так что достаточно `cp` + `make tf-init`. Перед apply убедитесь, что
+в списке зон есть `ru-central1-a`, `-b` и `-c`.
 
-Leave `token = ""` to reuse the `yc` CLI profile — recommended, since then no
-secret ever lands in a file. `terraform.tfvars` is gitignored.
+Оставьте `token = ""`, чтобы переиспользовать профиль `yc` CLI — это
+рекомендуется, тогда секрет вообще не попадает в файлы. `terraform.tfvars` в
+`.gitignore`.
 
-### Step 3 — plan, then apply
+### Шаг 3 — plan, затем apply
 
 ```bash
 make tf-init      # terraform init
-make tf-plan      # read the plan carefully
-make tf-apply     # ~10-15 minutes
+make tf-plan      # внимательно прочитать план
+make tf-apply     # ~10-15 минут
 ```
 
-Afterwards Terraform prints the endpoint you need:
+После этого Terraform печатает нужные выходы:
 
 ```bash
 cd terraform && terraform output          # api_endpoint, node_public_ips, ...
 cd ..
 ```
 
-Nodes need 2–5 minutes to become `READY`:
+Нодам нужно 2–5 минут, чтобы стать `READY`:
 
 ```bash
 kubectl --context url-fraud-cluster get nodes -w
 ```
 
-### Step 4 — get a kubeconfig
+### Шаг 4 — получить kubeconfig
 
 ```bash
 make kubeconfig
 kubectl --context url-fraud-cluster get nodes
 ```
 
-The script uses `yc managed-kubernetes cluster get-credentials` (this CLI has no
-`get-kubeconfig`), writes `~/.kube/config-url-fraud-cluster`, merges the context
-into your active kubeconfig — honouring `$KUBECONFIG` if it is set — and then
-verifies that a bare `kubectl` can actually see the context. From outside the
-VPC it requests the **external** endpoint; use `ENDPOINT_MODE=internal` if you
-run kubectl from inside the VPC.
+Скрипт использует `yc managed-kubernetes cluster get-credentials` (команды
+`get-kubeconfig` в этом CLI нет), пишет `~/.kube/config-url-fraud-cluster`,
+мержит контекст в активный kubeconfig — с учётом `$KUBECONFIG`, если он задан
+— и затем проверяет, что обычный `kubectl` действительно видит контекст.
+Извне VPC запрашивается **external** эндпоинт; если kubectl запускается
+внутри VPC, используйте `ENDPOINT_MODE=internal`.
 
-### Step 5 — push the image
+### Шаг 5 — запушить образ
 
 ```bash
 export GHCR_USER=<your-github-login>
@@ -563,19 +582,19 @@ export GHCR_TOKEN=<PAT with write:packages>
 
 make push          # ghcr.io/<your-github-login>/url-fraud-api:<sha>
 
-# only if the GHCR package is private
+# только если пакет GHCR приватный
 export GITHUB_USER=<your-github-login>
-make pull-secret      # creates the ghcr-pull secret
+make pull-secret      # создаёт секрет ghcr-pull
 ```
 
-### Step 6 — deploy the app
+### Шаг 6 — задеплоить приложение
 
 ```bash
 make deploy IMAGE_TAG=1.0.0
 make status
 ```
 
-Or manually:
+Или вручную:
 
 ```bash
 kubectl --context url-fraud-cluster apply -f k8s/00-namespace.yaml
@@ -587,11 +606,11 @@ kubectl --context url-fraud-cluster apply -f k8s/30-service-nodeport.yaml
 kubectl --context url-fraud-cluster -n url-fraud rollout status deployment/url-fraud-api
 ```
 
-With a private image, add `--with-pull-secret ghcr-pull`.
+С приватным образом добавьте `--with-pull-secret ghcr-pull`.
 
-### Step 7 — call the public API
+### Шаг 7 — дёрнуть публичное API
 
-The Service is a `NodePort` on `30080`, so any node's public IP works:
+Service — это `NodePort` на `30080`, поэтому подойдёт публичный IP любой ноды:
 
 ```bash
 NODE_IP=$(kubectl --context url-fraud-cluster get nodes -o \
@@ -606,134 +625,135 @@ curl -X POST "http://${NODE_IP}:30080/api/v1/predict" \
 make smoke API_BASE_URL="http://${NODE_IP}:30080"
 ```
 
-### NodePort or Load Balancer?
+### NodePort или Load Balancer?
 
-`k8s/30-service-nodeport.yaml` is the default because it is one line and needs
-no extra cloud resources. The tradeoff is that the endpoint moves if the node
-does.
+`k8s/30-service-nodeport.yaml` выбран по умолчанию, потому что это одна строка
+и никаких дополнительных облачных ресурсов. Плата — адрес переезжает вместе с
+нодой.
 
-For a stable address with TLS and a domain, use
-`k8s/40-ingress.yaml` with the `yandex-ingress` Ingress controller, which
-provisions a Load Balancer with a static public IP and a certificate:
+Для стабильного адреса с TLS и доменом используйте `k8s/40-ingress.yaml` с
+Ingress-контроллером `yandex-ingress`: он создаёт Load Balancer со статическим
+публичным IP и сертификатом.
 
 ```bash
 kubectl --context url-fraud-cluster apply -f k8s/40-ingress.yaml
 kubectl --context url-fraud-cluster -n url-fraud get ingress -w
 ```
 
-Edit the `host` in that file first. Do not apply both `30-` and `40-`.
+Сначала поправьте `host` в этом файле. Не применяйте `30-` и `40-` одновременно.
 
 ---
 
-## Operations
+## Эксплуатация
 
 ```bash
-make status                       # pods, services, node ports
-make logs                         # tail the API logs
-make undeploy                     # delete the manifests
-make tf-destroy                   # delete the cluster, VPC, and everything else
+make status                       # поды, сервисы, node ports
+make logs                         # логи API
+make undeploy                     # удалить манифесты
+make tf-destroy                   # удалить кластер, VPC и всё остальное
 ```
 
-Useful one-liners:
+Полезные однострочники:
 
 ```bash
-# scale
+# масштабирование
 kubectl --context url-fraud-cluster -n url-fraud scale deployment/url-fraud-api --replicas 4
 
-# what is actually running
+# что реально запущено
 kubectl --context url-fraud-cluster -n url-fraud get deployment url-fraud-api -o yaml
 
-# roll back to the previous image
+# откат на предыдущий образ
 kubectl --context url-fraud-cluster -n url-fraud rollout undo deployment/url-fraud-api
 
-# resource usage (needs metrics-server)
+# потребление ресурсов (нужен metrics-server)
 kubectl --context url-fraud-cluster -n url-fraud top pods
 
-# enable autoscaling
+# включить автоскейлинг
 kubectl --context url-fraud-cluster -n url-fraud apply -f k8s/50-hpa.yaml
 
-# traffic per class
+# трафик по классам
 curl -s http://$NODE_IP:30080/metrics | grep url_fraud
 ```
 
-### Production hardening already in place
+### Что уже сделано для продакшена
 
-- `runAsNonRoot`, `readOnlyRootFilesystem`, all capabilities dropped, seccomp
-  `RuntimeDefault` — the namespace enforces the `restricted` Pod Security
-  Standard, so the pod would be rejected if these were removed.
-- Non-root user `10001`, writable `/tmp` via `emptyDir` (required by
-  `readOnlyRootFilesystem`).
-- No CPU limit on purpose: throttling would add latency spikes to an inference
-  call that normally takes milliseconds. Memory is capped at 512Mi.
-- `startupProbe` → `livenessProbe` → `readinessProbe` chain, so a slow model
-  load is never mistaken for a dead process, and `/readyz` keeps unready pods
-  out of the Service endpoints.
-- 2 replicas spread across nodes, `maxUnavailable: 0`, plus a PodDisruptionBudget.
+- `runAsNonRoot`, `readOnlyRootFilesystem`, все capabilities отброшены, seccomp
+  `RuntimeDefault` — namespace включает Pod Security Standard `restricted`,
+  поэтому под был бы отвергнут, если бы это убрали.
+- Непривилегированный пользователь `10001`, записываемый `/tmp` через `emptyDir`
+  (нужен для `readOnlyRootFilesystem`).
+- Лимита CPU нет намеренно: троттлинг добавил бы всплески латентности к
+  инференсу, который обычно занимает миллисекунды. Память ограничена 512Mi.
+- Цепочка `startupProbe` → `livenessProbe` → `readinessProbe`, поэтому медленная
+  загрузка модели не путается с мёртвым процессом, а `/readyz` не пускает
+  неготовые поды в эндпоинты Service.
+- 2 реплики, раскиданные по нодам, `maxUnavailable: 0` плюс PodDisruptionBudget.
 
-### Known limitations
+### Известные ограничения
 
-- The NodePort is open to `0.0.0.0/0` and the API has **no authentication**.
-  That is fine for a graded homework deployment and wrong for anything real.
-  Restrict `api_port`'s CIDR in `variables.tf`, or use the Ingress route.
-- The model is a 2019-era URL classifier. It judges URL *strings*, so it cannot
-  see redirects, page content, or newly registered domains.
-- The container image itself has **never been built**: this machine has no
-  Docker daemon. Everything below the image boundary — model, API, tests,
-  manifests, Terraform — is verified, but treat `make build` as the first real
-  test of the `Dockerfile`.
-
----
-
-## Troubleshooting
-
-| Symptom                                    | Cause and fix                                                                 |
-| ----------------------------------------- | ----------------------------------------------------------------------------- |
-| `failed to connect to the docker API`      | Docker daemon is not running — start Docker Desktop                             |
-| `/readyz` returns 503 forever              | `models/model.joblib` missing from the image; check `kubectl logs`             |
-| Pods stuck in `ImagePullBackOff`           | Wrong tag, or a private package without a pull secret (`make pull-secret`)      |
-| Nodes `NotReady` right after apply         | Normal for the first 2–5 minutes; image pulls and CNI setup                    |
-| `CrashLoopBackOff`                         | `kubectl -n url-fraud logs deployment/url-fraud-api`                            |
-| No `ExternalIP` on nodes                   | `enable_public_ip_on_nodes = false`; re-apply or use an Ingress                  |
-| Terraform: provider version mismatch       | `terraform init -upgrade` after changing `versions.tf`                          |
-| `yc managed-kubernetes list-versions`      | Use a version this folder allows, then set `kubernetes_version`                 |
-| Acceptance tests all skip                  | `API_BASE_URL` is not set                                                       |
-| NodePort connection times out from outside | VPC firewall or corporate egress rules; test `curl` from a phone hotspot        |
+- NodePort открыт на `0.0.0.0/0`, и у API **нет аутентификации**. Для сдачи
+  домашки это нормально, для чего-либо реального — нет. Ограничьте CIDR в
+  `variables.tf` для `api_port` или используйте маршрут через Ingress.
+- Модель — классификатор URL времён 2019 года. Она судит *строки* URL, поэтому
+  не видит редиректы, содержимое страниц и только что зарегистрированные
+  домены.
+- Образ собирается под `amd64`, потому что ноды Yandex Cloud — `amd64`. На
+  Apple Silicon локальная сборка идёт через эмуляцию; для нативной скорости
+  используйте `PLATFORM=linux/arm64`, но такой образ в кластер не поедет.
 
 ---
 
-## Design decisions
+## Диагностика
 
-**Why a NodePort?** The assignment asks for a publicly reachable API on three
-nodes. A NodePort is the cheapest way to get one and needs no extra Yandex
-resources. The Ingress alternative is included for when a stable IP matters.
-
-**Why a regional control plane?** Three masters, one per zone. A zonal control
-plane would be a single point of failure for a cluster whose whole point is
-three nodes.
-
-**Why fixed scale on the node group?** `fixed_scale = 3` keeps "3 nodes"
-literally true. Cluster autoscaling is available as a commented-out variable
-but off by default, because an autoscaling group can end up with four or five
-nodes and that contradicts the requirement.
-
-**Why is the model committed to git?** It is 2.9 MB of deterministic output
-from a script in the same repo. Committing it means the Docker build needs no
-network, tests need no dataset, and a reviewer can reproduce the exact served
-artifact — `metadata.json` carries its SHA-256.
-
-**Why no authentication?** Out of scope for the assignment. The `restricted`
-Pod Security Standard, non-root user, read-only root filesystem and resource
-limits are all in place so that adding auth later is a routing change rather
-than a hardening project.
-
-**Why `--workers 1`?** One model per process. Replicas in the Deployment give
-horizontal scale with linear memory cost; threads would duplicate the model
-without using extra cores.
+| Симптом                                     | Причина и решение                                                        |
+| ------------------------------------------- | ------------------------------------------------------------------------ |
+| `failed to connect to the docker API`       | Не запущен Docker daemon — стартуйте Docker Desktop                      |
+| `/readyz` вечно отдаёт 503                  | В образе нет `models/model.joblib`; смотрите `kubectl logs`              |
+| Поды зависли в `ImagePullBackOff`           | Неверный тег или приватный пакет без pull-секрета (`make pull-secret`)    |
+| Ноды `NotReady` сразу после apply           | Для первых 2–5 минут это нормально; идёт pull образов и настройка CNI     |
+| `CrashLoopBackOff`                          | `kubectl -n url-fraud logs deployment/url-fraud-api`                      |
+| У нод нет `ExternalIP`                      | `enable_public_ip_on_nodes = false`; пере-apply или используйте Ingress    |
+| Terraform: несовпадение версии провайдера   | `terraform init -upgrade` после правки `versions.tf`                      |
+| `yc managed-kubernetes list-versions`       | Возьмите версию, разрешённую в каталоге, и задайте `kubernetes_version`    |
+| Все acceptance-тесты пропущены              | Не задан `API_BASE_URL`                                                   |
+| NodePort не отвечает снаружи                | Файрвол VPC или корпоративные egress-правила; проверьте `curl` с мобильного интернета |
+| CI: run без единого job                      | Workflow невалиден; ищите тернарник в `if:` и проверяйте `actionlint`     |
 
 ---
 
-## License / dataset
+## Проектные решения
 
-The dataset belongs to
+**Почему NodePort?** Задание просит публично доступный API на трёх нодах.
+NodePort — самый дешёвый способ получить его, без дополнительных ресурсов
+Yandex. Вариант с Ingress приложен на случай, когда нужен стабильный IP.
+
+**Почему региональный control plane?** Три master, по одному на зону. Zonal
+control plane был бы единой точкой отказа для кластера, смысл которого как раз
+в трёх нодах.
+
+**Почему fixed scale на группе нод?** `fixed_scale = 3` делает «три ноды»
+буквально верно. Cluster autoscaling доступен как закомментированная переменная,
+но выключен по умолчанию: автоскейлинговая группа может дорасти до четырёх или
+пяти нод, что противоречит требованию.
+
+**Почему модель в git?** Это 2.9 МБ детерминированного вывода скрипта из того
+же репозитория. Коммит означает, что docker build не требует сети, тестам не
+нужен датасет, а ревьюер может воспроизвести ровно тот артефакт, который
+отдаётся, — в `metadata.json` лежит его SHA-256.
+
+**Почему без аутентификации?** Вне рамок задания. Pod Security Standard
+`restricted`, непривилегированный пользователь, read-only root filesystem и
+лимиты ресурсов на месте, чтобы добавление авторизации позже было изменением
+маршрутизации, а не проектом по hardening.
+
+**Почему `--workers 1`?** Одна модель на процесс. Реплики Deployment дают
+горизонтальное масштабирование с линейной стоимостью по памяти; потоки
+дублировали бы модель, не используя дополнительные ядра.
+
+---
+
+## Лицензия / датасет
+
+Датасет принадлежит
 [faizann24/Using-machine-learning-to-detect-malicious-URLs](https://github.com/faizann24/Using-machine-learning-to-detect-malicious-URLs)
-and is fetched at training time, not redistributed here.
+и скачивается в момент обучения, здесь не распространяется.
