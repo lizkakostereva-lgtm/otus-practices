@@ -714,6 +714,7 @@ curl -s http://$NODE_IP:30080/metrics | grep url_fraud
 | `CrashLoopBackOff`                          | `kubectl -n url-fraud logs deployment/url-fraud-api`                      |
 | У нод нет `ExternalIP`                      | `enable_public_ip_on_nodes = false`; пере-apply или используйте Ingress    |
 | Terraform: несовпадение версии провайдера   | `terraform init -upgrade` после правки `versions.tf`                      |
+| `Cannot connect to YC tool initialization service` | Косметика: провайдер проверяет свою версию, endpoint недоступен. `make tf-plan` уже гасит это через `YC_TERRAFORM_INITIALIZATION_SILENCE=true` |
 | `yc managed-kubernetes list-versions`       | Возьмите версию, разрешённую в каталоге, и задайте `kubernetes_version`    |
 | Все acceptance-тесты пропущены              | Не задан `API_BASE_URL`                                                   |
 | NodePort не отвечает снаружи                | Файрвол VPC или корпоративные egress-правила; проверьте `curl` с мобильного интернета |
@@ -735,6 +736,17 @@ control plane был бы единой точкой отказа для клас
 буквально верно. Cluster autoscaling доступен как закомментированная переменная,
 но выключен по умолчанию: автоскейлинговая группа может дорасти до четырёх или
 пяти нод, что противоречит требованию.
+
+**Почему в `Makefile` задана `YC_TERRAFORM_INITIALIZATION_SILENCE=true`?**
+Провайдер `yandex` при старте опрашивает собственный сервис контроля версий
+(`api.cloud.yandex.net`). Из части сетей этот host недоступен, и провайдер
+печатает `Warning: Cannot connect to YC tool initialization service`. На
+работу это не влияет: plan считает все 18 ресурсов, все вызовы Yandex Cloud API
+проходят успешно, а `apply` создаёт инфраструктуру как обычно. Проверено
+эмпирически — переменная со значением строго `true` убирает предупреждение, а
+`1`, `yes` и `TRUE` не убирают. Сделано в `Makefile`, а не в `.tf`, чтобы
+переменная не попадала в код и её можно было отключить через
+`YC_TF_ENV= make tf-plan`.
 
 **Почему модель в git?** Это 2.9 МБ детерминированного вывода скрипта из того
 же репозитория. Коммит означает, что docker build не требует сети, тестам не

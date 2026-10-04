@@ -24,6 +24,11 @@ BIN             := $(VENV)/bin
 SAMPLE_FRAC     ?= 0.25
 KUBE_CONTEXT    ?= $(NAMESPACE)-cluster
 KUBECONFIG_PATH ?= $(HOME)/.kube/config-$(KUBE_CONTEXT)
+# The yandex provider pings its own version-control service on startup. That
+# endpoint is unreachable from some networks, which only produces the cosmetic
+# "Cannot connect to YC tool initialization service" warning - plan/apply work
+# regardless. Set YC_TF_ENV= to see it again.
+YC_TF_ENV       ?= YC_TERRAFORM_INITIALIZATION_SILENCE=true
 
 export MODEL_PATH       ?= $(CURDIR)/models/model.joblib
 export MODEL_METADATA_PATH ?= $(CURDIR)/models/metadata.json
@@ -132,15 +137,15 @@ tf-init: ## terraform init in terraform/
 
 .PHONY: tf-plan
 tf-plan: ## terraform plan
-	cd terraform && terraform plan
+	cd terraform && $(YC_TF_ENV) terraform plan
 
 .PHONY: tf-apply
 tf-apply: ## terraform apply (creates the 3-node k8s cluster)
-	cd terraform && terraform apply -auto-approve
+	cd terraform && $(YC_TF_ENV) terraform apply -auto-approve
 
 .PHONY: tf-destroy
 tf-destroy: ## terraform destroy (deletes the cluster and network)
-	cd terraform && terraform destroy -auto-approve
+	cd terraform && $(YC_TF_ENV) terraform destroy -auto-approve
 
 .PHONY: kubeconfig
 kubeconfig: ## Download the cluster kubeconfig to ~/.kube/config-url-fraud-cluster
