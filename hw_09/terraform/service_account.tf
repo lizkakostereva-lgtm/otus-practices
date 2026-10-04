@@ -53,6 +53,18 @@ resource "yandex_resourcemanager_folder_iam_member" "cluster_vpc_public_admin" {
   member    = "serviceAccount:${yandex_iam_service_account.cluster.id}"
 }
 
+# Required by the master_logging block below. Without it the API rejects the
+# cluster with:
+#   "master logging require 'logging.writer' role to be assigned to master
+#    serviceAccount"
+# This covers the apiserver / audit / events / autoscaler log streams alike -
+# they are all Cloud Logging writes by the control plane.
+resource "yandex_resourcemanager_folder_iam_member" "cluster_logging_writer" {
+  folder_id = var.folder_id
+  role      = "logging.writer"
+  member    = "serviceAccount:${yandex_iam_service_account.cluster.id}"
+}
+
 # --- Node group service account ----------------------------------------------
 
 resource "yandex_resourcemanager_folder_iam_member" "nodes_registry_puller" {

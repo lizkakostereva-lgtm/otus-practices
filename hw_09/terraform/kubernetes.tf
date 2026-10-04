@@ -64,6 +64,7 @@ resource "yandex_kubernetes_cluster" "main" {
   depends_on = [
     yandex_resourcemanager_folder_iam_member.cluster_k8s_clusters_agent,
     yandex_resourcemanager_folder_iam_member.cluster_vpc_public_admin,
+    yandex_resourcemanager_folder_iam_member.cluster_logging_writer,
     yandex_resourcemanager_folder_iam_member.nodes_registry_puller,
   ]
 }
@@ -96,13 +97,14 @@ resource "yandex_kubernetes_node_group" "workers" {
     auto_repair  = true
   }
 
-  # One subnet per zone => 3 nodes in 3 different zones.
+  # One node per zone. The zone is pinned here, while the subnets themselves
+  # come from instance_template.network_interface.subnet_ids below -
+  # allocation_policy.location.subnet_id is deprecated in provider 0.235.
   allocation_policy {
     dynamic "location" {
       for_each = toset(var.zones)
       content {
-        zone      = location.value
-        subnet_id = local.node_subnets_by_zone[location.value]
+        zone = location.value
       }
     }
   }

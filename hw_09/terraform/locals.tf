@@ -5,10 +5,6 @@
 # precomputed here and looked up by plain key afterwards.
 
 locals {
-  node_subnets_by_zone = {
-    for idx, zone in var.zones : zone => yandex_vpc_subnet.zones[idx].id
-  }
-
   master_subnets_by_zone = {
     for idx, zone in var.zones : zone => yandex_vpc_subnet.master[idx].id
   }

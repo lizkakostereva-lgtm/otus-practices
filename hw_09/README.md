@@ -714,6 +714,10 @@ curl -s http://$NODE_IP:30080/metrics | grep url_fraud
 | `CrashLoopBackOff`                          | `kubectl -n url-fraud logs deployment/url-fraud-api`                      |
 | У нод нет `ExternalIP`                      | `enable_public_ip_on_nodes = false`; пере-apply или используйте Ingress    |
 | Terraform: несовпадение версии провайдера   | `terraform init -upgrade` после правки `versions.tf`                      |
+| `Permission denied` на `yandex_kubernetes_cluster` | YC проверяет роли сервисного аккаунта кластера в момент создания. Нужны `k8s.clusters.agent` + `vpc.publicAdmin` (публичные IP) + `logging.writer` (если включён `master_logging`) — см. `service_account.tf` |
+| `Role 'container.deployer' not found`         | Такой роли нет. Реестр — это `container-registry.*`, в частности `container-registry.images.puller` |
+| `master logging require 'logging.writer' role` | Включён `master_logging`, но у master-SA нет `logging.writer`; проверьте `depends_on` в `kubernetes.tf` |
+| `The 'subnet_id' field has been deprecated`    | В `allocation_policy.location` оставьте только `zone`, подсети задавайте через `instance_template.network_interface.subnet_ids` |
 | `Cannot connect to YC tool initialization service` | Косметика: провайдер проверяет свою версию, endpoint недоступен. `make tf-plan` уже гасит это через `YC_TERRAFORM_INITIALIZATION_SILENCE=true` |
 | `yc managed-kubernetes list-versions`       | Возьмите версию, разрешённую в каталоге, и задайте `kubernetes_version`    |
 | Все acceptance-тесты пропущены              | Не задан `API_BASE_URL`                                                   |
