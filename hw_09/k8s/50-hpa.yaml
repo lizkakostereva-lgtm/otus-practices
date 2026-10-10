@@ -1,0 +1,32 @@
+# Optional: scale the API on CPU usage.
+#
+#   kubectl -n url-fraud apply -f k8s/50-hpa.yaml
+#
+# Needs metrics-server (installed by the terraform module) and a resource
+# request on the container, which 20-deployment.yaml already sets.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: url-fraud-api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      # Inference is bursty; do not thrash the replica count.
+      stabilizationWindowSeconds: 300

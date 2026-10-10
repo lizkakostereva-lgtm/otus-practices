@@ -1,0 +1,364 @@
+---
+# hw_09 — URL fraud API
+#
+# Pipeline:
+#   1. lint      — ruff check + format check (fast fail)
+#   2. test      — pytest with coverage, and a train-then-evaluate check
+#   3. build     — docker buildx, no push (catches broken images early)
+#   4. push      — build & push to Yandex Container Registry (main, tags, manual)
+#   5. deploy    — optional: apply the k8s manifests, then smoke-test
+#
+# Secrets (Settings -> Secrets and variables -> Actions):
+#   YC_SA_KEY     JSON authorized key of the CI service account (push AND deploy).
+#                 Needs: container-registry.images.pusher (push) and
+#                 k8s.cluster-api.cluster-admin + k8s.viewer (deploy).
+# Variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   YC_REGISTRY_ID  Yandex Container Registry id (cr.yandex/<id>/url-fraud-api)
+#   YC_FOLDER_ID    Yandex Cloud folder id (optional; defaults below)
+#   KUBE_CONTEXT    kubectl context name (default: url-fraud-cluster)
+#
+# The deploy job authenticates with the same SA key: it installs the `yc` CLI,
+# creates a profile from YC_SA_KEY and fetches the kubeconfig at runtime. A
+# stored KUBECONFIG secret is therefore NOT required (it would embed a local yc
+# path/profile that does not exist on a runner).
+#
+# Notes:
+#   - Pushing to Yandex Container Registry authenticates with a service account
+#     authorized key: `docker login cr.yandex -u json_key -p <key-json>`. The SA
+#     needs container-registry.images.pusher.
+#   - Workloads pull from the same registry using the node group SA
+#     (container-registry.images.puller), so no imagePullSecret is needed.
+#   - workflow_dispatch: set BOTH push_image and deploy to publish and deploy.
+name: hw_09 CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "hw_09/**"
+      - ".github/workflows/hw_09-ci-cd.yml"
+  pull_request:
+    paths:
+      - "hw_09/**"
+      - ".github/workflows/hw_09-ci-cd.yml"
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: "Push the image to Yandex Container Registry"
+        type: boolean
+        # Defaults are true so that the green "Run workflow" button in the UI is
+        # the whole pipeline: lint -> test -> build -> push -> deploy -> smoke.
+        # Turn them off for a CI-only verification run.
+        default: true
+      deploy:
+        description: "Deploy to the Kubernetes cluster"
+        type: boolean
+        default: true
+
+# Never run two builds of the same ref at once; queue instead.
+concurrency:
+  group: hw_09-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Must match the interpreter the model artifact was produced with (Dockerfile).
+  PYTHON_VERSION: "3.12"
+  IMAGE_NAME: url-fraud-api
+  NAMESPACE: url-fraud
+  DEPLOY_DIR: hw_09
+  CLUSTER_NAME: url-fraud-cluster
+  # Image base in Yandex Container Registry (cr.yandex/<registry_id>/url-fraud-api)
+  YC_REGISTRY: cr.yandex/${{ vars.YC_REGISTRY_ID }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hw_09
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: hw_09/requirements-dev.txt
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hw_09
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: hw_09/requirements-dev.txt
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Unit and integration tests
+        run: pytest --cov=app --cov-report=xml --cov-report=term
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-hw09
+          path: hw_09/coverage.xml
+          if-no-files-found: warn
+
+      # Proves the committed artifact is consistent with the committed code:
+      # retrains on a small sample and fails if quality regressed.
+      - name: Retrain smoke check (small sample)
+        run: python -m app.train --sample-frac 0.05 --min-f1 0.5 --min-auc 0.85
+
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: hw_09
+          file: hw_09/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The test suite already passed, but verify the containerised app boots and
+      # answers with the committed model before anything gets pushed.
+      - name: Verify the image boots
+        run: |
+          docker run -d --name hw09-ci -p 8000:8000 \
+            ${{ env.IMAGE_NAME }}:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/readyz >/dev/null 2>&1; then
+              echo "ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/health | tee /dev/stderr
+          echo
+          curl -fsS -X POST http://127.0.0.1:8000/api/v1/predict \
+            -H 'Content-Type: application/json' \
+            -d '{"url":"upstreams.info/wp-admin/includes/inst.exe"}' | tee /dev/stderr
+          echo
+          docker rm -f hw09-ci
+
+  push:
+    name: Push to Yandex Container Registry
+    runs-on: ubuntu-latest
+    needs: [build]
+    # No ternary in GitHub expressions, so the two triggers are spelled out.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.push_image) ||
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+    permissions:
+      contents: read
+    outputs:
+      # docker/metadata-action has no `full-tag` output, so the deployable ref is
+      # resolved explicitly here: an immutable, full-SHA tag.
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: ref
+        name: Resolve image reference
+        env:
+          YC_REGISTRY_ID: ${{ vars.YC_REGISTRY_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$YC_REGISTRY_ID" ]; then
+            echo "::error::YC_REGISTRY_ID repository variable is not set" >&2
+            exit 1
+          fi
+          image="cr.yandex/${YC_REGISTRY_ID}/${IMAGE_NAME}:${GITHUB_SHA}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "Publishing ${image}"
+
+      # Yandex Container Registry accepts a service-account authorized key as
+      # the password and the literal username `json_key`.
+      - name: Log into Yandex Container Registry
+        env:
+          YC_SA_KEY: ${{ secrets.YC_SA_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$YC_SA_KEY" ]; then
+            echo "::error::YC_SA_KEY secret is not set" >&2
+            exit 1
+          fi
+          echo "$YC_SA_KEY" | docker login cr.yandex -u json_key --password-stdin
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.YC_REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: hw_09
+          file: hw_09/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ref.outputs.image }}
+            ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: [push]
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.deploy) ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.33.0
+
+      - name: Install Yandex Cloud CLI
+        run: |
+          set -euo pipefail
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh \
+            | bash -s -- -i "$HOME/yandex-cloud" -n
+          echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
+
+      # Kubernetes secrets must not be echoed; the SA key lives in $RUNNER_TEMP
+      # and is removed in the final step of this job.
+      - name: Authenticate to Yandex Cloud
+        env:
+          YC_SA_KEY: ${{ secrets.YC_SA_KEY }}
+          YC_FOLDER_ID: ${{ vars.YC_FOLDER_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$YC_SA_KEY" ]; then
+            echo "::error::YC_SA_KEY secret is not set" >&2
+            exit 1
+          fi
+          FOLDER="${YC_FOLDER_ID:-b1gslcf31j2qksdat95l}"
+          install -m 600 /dev/null "$RUNNER_TEMP/sa-key.json"
+          printf '%s' "$YC_SA_KEY" > "$RUNNER_TEMP/sa-key.json"
+          yc config profile create ci
+          yc config set service-account-key "$RUNNER_TEMP/sa-key.json"
+          yc config set folder-id "$FOLDER"
+
+      - name: Fetch kubeconfig
+        env:
+          KUBE_CONTEXT: ${{ vars.KUBE_CONTEXT }}
+          YC_FOLDER_ID: ${{ vars.YC_FOLDER_ID }}
+        run: |
+          set -euo pipefail
+          CONTEXT="${KUBE_CONTEXT:-url-fraud-cluster}"
+          FOLDER="${YC_FOLDER_ID:-b1gslcf31j2qksdat95l}"
+          mkdir -p "$HOME/.kube"
+          yc managed-kubernetes cluster get-credentials \
+            --name "$CLUSTER_NAME" \
+            --folder-id "$FOLDER" \
+            --external \
+            --kubeconfig "$HOME/.kube/config" \
+            --context-name "$CONTEXT" \
+            --force
+          chmod 600 "$HOME/.kube/config"
+          echo "kubeconfig fetched as ${CONTEXT}"
+
+      - name: Apply manifests
+        working-directory: hw_09
+        env:
+          IMAGE: ${{ needs.push.outputs.image }}
+          KUBE_CONTEXT: ${{ vars.KUBE_CONTEXT }}
+        run: |
+          set -euo pipefail
+          CONTEXT="${KUBE_CONTEXT:-url-fraud-cluster}"
+
+          # The cluster pulls from Yandex Container Registry with the node group
+          # service account (container-registry.images.puller), so no
+          # imagePullSecret is needed for these workloads.
+          kubectl --context "$CONTEXT" apply -f k8s/00-namespace.yaml
+          kubectl --context "$CONTEXT" apply -f k8s/10-configmap.yaml
+          kubectl --context "$CONTEXT" apply -f k8s/20-deployment.yaml
+          kubectl --context "$CONTEXT" --namespace url-fraud \
+            set image deployment/url-fraud-api "api=$IMAGE"
+          kubectl --context "$CONTEXT" apply -f k8s/30-service-nodeport.yaml
+          kubectl --context "$CONTEXT" apply -f k8s/60-pdb.yaml
+
+          if kubectl --context "$CONTEXT" --namespace url-fraud get hpa url-fraud-api >/dev/null 2>&1; then
+            kubectl --context "$CONTEXT" apply -f k8s/50-hpa.yaml
+          fi
+
+      - name: Rollout status
+        env:
+          KUBE_CONTEXT: ${{ vars.KUBE_CONTEXT }}
+        run: |
+          set -euo pipefail
+          CONTEXT="${KUBE_CONTEXT:-url-fraud-cluster}"
+          kubectl --context "$CONTEXT" -n url-fraud \
+            rollout status deployment/url-fraud-api --timeout=180s
+          kubectl --context "$CONTEXT" -n url-fraud get pods,svc -o wide
+
+      - name: Smoke test against the public NodePort
+        working-directory: hw_09
+        env:
+          KUBE_CONTEXT: ${{ vars.KUBE_CONTEXT }}
+        run: |
+          set -euo pipefail
+          CONTEXT="${KUBE_CONTEXT:-url-fraud-cluster}"
+          NODE_IP="$(kubectl --context "$CONTEXT" get nodes -o \
+            jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')"
+          if [ -z "$NODE_IP" ]; then
+            echo "no ExternalIP on the first node; skipping remote smoke test" >&2
+            exit 0
+          fi
+          echo "Smoke testing http://${NODE_IP}:30080"
+          API_BASE_URL="http://${NODE_IP}:30080" ./scripts/smoke_test.sh
+
+      # The kubeconfig exec plugin keeps authenticating via `yc`, so the SA key
+      # file must stay for the whole job; drop it only now.
+      - name: Remove YC service-account key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa-key.json"

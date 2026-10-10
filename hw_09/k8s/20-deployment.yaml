@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: url-fraud
+  annotations:
+    # Roll the pods when the model artifact changes, not only on image bumps.
+    checksum/config: "replaced-by-kustomize-or-script"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: url-fraud-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: url-fraud-api
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: url-fraud
+    spec:
+      # Spread replicas across nodes; with 3 nodes and 2 replicas this keeps
+      # the service available if a single node is lost.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: url-fraud-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Give in-flight predictions time to finish before the pod is killed.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api
+          # Overridden by scripts/deploy_k8s.sh and by the CI deploy job.
+          # Workloads pull from Yandex Container Registry via the node group
+          # service account (container-registry.images.puller), so no
+          # imagePullSecret is required.
+          image: cr.yandex/REGISTRY_ID/url-fraud-api:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: url-fraud-api-config
+          env:
+            # An empty ConfigMap value would break model loading, so pin the
+            # artifact paths explicitly.
+            - name: MODEL_PATH
+              value: /app/models/model.joblib
+            - name: MODEL_METADATA_PATH
+              value: /app/models/metadata.json
+          # The API is pure CPU; keep it off GPUs and give it a sane request rate.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # No CPU limit on purpose: throttling would add latency spikes to
+              # an inference call that is normally a few milliseconds.
+              memory: 512Mi
+          startupProbe:
+            # Model load is fast, but give the first start room on slow nodes.
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 20
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            # /readyz returns 503 until the model is loaded, so traffic is only
+            # routed to pods that can actually serve predictions.
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 2
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # readOnlyRootFilesystem means /tmp must be a writable emptyDir.
+        - name: tmp
+          emptyDir: {}
+      # Private external registries (e.g. GHCR) would need an imagePullSecret
+      # pinned here. Yandex Container Registry is pulled with the node SA, so
+      # leave this commented out:
+      # imagePullSecrets:
+      #   - name: registry-pull

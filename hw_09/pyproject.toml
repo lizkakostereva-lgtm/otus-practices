@@ -1,0 +1,51 @@
+[project]
+name = "url-fraud-api"
+version = "1.0.0"
+description = "REST API around a scikit-learn malicious-URL classifier, deployable to Kubernetes"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "acceptance: tests that run against a live deployment (need API_BASE_URL)",
+    "slow: tests that take more than a second",
+]
+filterwarnings = [
+    "error::DeprecationWarning:app.*",
+    # joblib's numpy_pickle still assigns .shape on unpickle (numpy 2.5)
+    "ignore:Setting the shape on a NumPy array:DeprecationWarning",
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/train.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+exclude = [".venv", "data", "models"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "B008",  # FastAPI Depends() in defaults is the documented pattern
+    "E501",  # line length handled by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+"app/train.py" = ["E402"]

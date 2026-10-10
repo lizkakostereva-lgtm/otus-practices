@@ -1,0 +1,47 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#   yc cloud get --id            # cloud_id
+#   yc config list               # folder_id
+#   yc managed-kubernetes list-versions
+
+cloud_id  = "b1gsfvsq9k0th0eo1m8o"
+folder_id = "b1gslcf31j2qksdat95l"
+
+# Leave empty to reuse the `yc` CLI login (recommended: no secret in git).
+# To use a token instead: yc iam create-token
+token = ""
+
+cluster_name = "url-fraud-cluster"
+environment  = "production"
+
+# ru-central1-c and ru-central1-b are frequently disabled for Managed
+# Kubernetes; a/d/e are the current candidates. Adjust to `yc compute zone list`.
+zones               = ["ru-central1-a", "ru-central1-d", "ru-central1-e"]
+network_cidr_blocks = ["10.130.0.0/24", "10.131.0.0/24", "10.132.0.0/24"]
+
+# Control plane: regional = one master per zone (survives a zone loss) or
+# zonal = single master in `zone` (provisions much faster when capacity in
+# one of the zones above is constrained, e.g. ru-central1-e).
+master_regional = false
+zone            = "ru-central1-a"
+
+kubernetes_version = "1.33"
+node_count         = 3
+node_platform      = "standard-v3"
+node_cores         = 2
+node_memory_gb     = 4
+node_disk_size_gb  = 30
+node_disk_type     = "network-ssd"
+
+# Required for the NodePort endpoint http://<node-ip>:30080
+enable_public_ip_on_nodes = true
+api_port                  = 30080
+node_port                 = 30080
+
+# Optional, for kubectl top / HPA
+enable_metrics_server = true
+enable_autoscaler     = true
+
+# Optional: SSH access to the nodes
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@host"
