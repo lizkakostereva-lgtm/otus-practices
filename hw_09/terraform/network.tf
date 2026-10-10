@@ -2,7 +2,7 @@
 #
 # Why a new network instead of the shared `default` one used in hw_02..hw_08:
 #   * the default subnets have no route table, so nodes get no internet egress
-#     and cannot pull images from ghcr.io;
+#     and cannot pull images from the container registry;
 #   * keeping this homework's resources separate makes `terraform destroy` safe.
 
 resource "yandex_vpc_network" "main" {

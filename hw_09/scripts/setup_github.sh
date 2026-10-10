@@ -2,36 +2,51 @@
 #
 # One-time GitHub configuration for the hw_09 pipeline.
 #
-# Everything the `deploy` job needs, set through the gh CLI instead of by hand in
-# Settings -> Secrets and variables -> Actions. Re-runnable: every step overwrites
-# its own value, so fixing a stale secret is the same command again.
+# Sets the repository variables and the single secret that the `push` and
+# `deploy` jobs need, through the gh CLI instead of by hand in
+# Settings -> Secrets and variables -> Actions. Re-runnable: every step
+# overwrites its own value, so fixing a stale secret is the same command.
 #
-#   ./scripts/setup_github.sh                     # vars + kubeconfig secret
-#   ./scripts/setup_github.sh --no-kubeconfig     # CI only (no cluster yet)
-#   ./scripts/setup_github.sh --pull-secret ghcr-pull   # private GHCR package
+#   ./scripts/setup_github.sh                              # all defaults
+#   ./scripts/setup_github.sh --yc-sa-key /tmp/ci-sa.json  # upload the SA key
 #
-# Private GHCR package also needs a PAT:
-#   export GHCR_TOKEN=<PAT with read:packages>  GITHUB_USER=<github login>
-# The alternative is a public package, which needs no secret at all — see the
-# README.
+# The same service account key (YC_SA_KEY) drives both jobs:
+#   * push   -> `docker login cr.yandex -u json_key`
+#   * deploy -> installs yc, builds a profile from the key, fetches kubeconfig
+# A stored KUBECONFIG secret is NOT used: it would embed a local yc path and
+# profile name that do not exist on a runner.
+#
+# Create the SA and its key once (roles: pusher to push, k8s.* to deploy):
+#
+#   yc iam service-account create --name url-fraud-ci-sa \
+#     --folder-id b1gslcf31j2qksdat95l --description "CI push + deploy"
+#   yc container registry add-access-binding --id <registry-id> \
+#     --role container-registry.images.pusher \
+#     --service-account-id <sa-id>
+#   yc resource-manager folder add-access-binding b1gslcf31j2qksdat95l \
+#     --role k8s.viewer --service-account-id <sa-id>
+#   yc resource-manager folder add-access-binding b1gslcf31j2qksdat95l \
+#     --role k8s.cluster-api.cluster-admin --service-account-id <sa-id>
+#   yc iam key create --service-account-id <sa-id> \
+#     --output /tmp/ci-sa.json --folder-id b1gslcf31j2qksdat95l
 set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-lizkakostereva-lgtm/otus-practices}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-url-fraud-cluster}"
-KUBECONFIG_FILE="${KUBECONFIG_FILE:-$HOME/.kube/config-url-fraud-cluster}"
-PULL_SECRET=""
-SET_KUBECONFIG=1
+YC_REGISTRY_ID="${YC_REGISTRY_ID:-}"
+YC_FOLDER_ID="${YC_FOLDER_ID:-b1gslcf31j2qksdat95l}"
+YC_SA_KEY_FILE="${YC_SA_KEY_FILE:-}"
 
 die() { echo "error: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --no-kubeconfig) SET_KUBECONFIG=0; shift ;;
-    --pull-secret) PULL_SECRET="${2:?--pull-secret needs a value}"; shift 2 ;;
-    --kubeconfig) KUBECONFIG_FILE="${2:?--kubeconfig needs a value}"; shift 2 ;;
     --context) KUBE_CONTEXT="${2:?--context needs a value}"; shift 2 ;;
-    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --yc-registry-id) YC_REGISTRY_ID="${2:?--yc-registry-id needs a value}"; shift 2 ;;
+    --yc-folder-id) YC_FOLDER_ID="${2:?--yc-folder-id needs a value}"; shift 2 ;;
+    --yc-sa-key) YC_SA_KEY_FILE="${2:?--yc-sa-key needs a path}"; shift 2 ;;
+    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -48,52 +63,28 @@ step "Setting repository variables"
 gh variable set KUBE_CONTEXT --repo "$REPO" --body "$KUBE_CONTEXT"
 echo "    KUBE_CONTEXT = $KUBE_CONTEXT"
 
-if [ -n "$PULL_SECRET" ]; then
-  gh variable set IMAGE_PULL_SECRET --repo "$REPO" --body "$PULL_SECRET"
-  echo "    IMAGE_PULL_SECRET = $PULL_SECRET"
+gh variable set YC_FOLDER_ID --repo "$REPO" --body "$YC_FOLDER_ID"
+echo "    YC_FOLDER_ID = $YC_FOLDER_ID"
+
+# Registry id defaults to `terraform output` if not given.
+if [ -z "$YC_REGISTRY_ID" ]; then
+  YC_REGISTRY_ID="$(cd terraform 2>/dev/null && terraform output -raw registry_id 2>/dev/null || true)"
 fi
+[ -n "$YC_REGISTRY_ID" ] || die "could not derive YC_REGISTRY_ID (terraform output); set --yc-registry-id"
+gh variable set YC_REGISTRY_ID --repo "$REPO" --body "$YC_REGISTRY_ID"
+echo "    YC_REGISTRY_ID = $YC_REGISTRY_ID"
 
-# --- kubeconfig secret -------------------------------------------------------
+# --- CI service account key secret -------------------------------------------
 
-if [ "$SET_KUBECONFIG" -eq 1 ]; then
-  step "Encoding kubeconfig as the KUBECONFIG secret"
-  [ -f "$KUBECONFIG_FILE" ] || die "kubeconfig not found: $KUBECONFIG_FILE
-       run 'make kubeconfig' once the cluster is READY, or pass --kubeconfig PATH,
-       or use --no-kubeconfig to set up CI only."
-
-  # tr -d '\n' instead of base64 -w0: GNU coreutils and BSD base64 disagree on
-  # the flag, and GitHub rejects newlines in a secret created this way.
-  B64="$(base64 < "$KUBECONFIG_FILE" | tr -d '\n')"
-  gh secret set KUBECONFIG --repo "$REPO" --body "$B64"
-  unset B64
-  echo "    KUBECONFIG set from $KUBECONFIG_FILE ($(wc -c < "$KUBECONFIG_FILE" | tr -d ' ') bytes)"
-
-  # Fail here rather than three minutes into a rollout.
-  if command -v kubectl >/dev/null 2>&1 \
-     && kubectl config get-contexts -o name 2>/dev/null | grep -qx "$KUBE_CONTEXT"; then
-    step "Checking the context name matches what CI will send"
-    echo "    ok: '$KUBE_CONTEXT' exists locally"
-  else
-    echo "    note: context '$KUBE_CONTEXT' not found in the local kubeconfig."
-    echo "          The deploy job will fail its context check if the name is wrong."
-  fi
+if [ -n "$YC_SA_KEY_FILE" ]; then
+  step "Uploading the CI service account key as the YC_SA_KEY secret"
+  [ -f "$YC_SA_KEY_FILE" ] || die "authorized key not found: $YC_SA_KEY_FILE"
+  gh secret set YC_SA_KEY --repo "$REPO" --body "$(cat "$YC_SA_KEY_FILE")"
+  rm -f "$YC_SA_KEY_FILE"
+  echo "    YC_SA_KEY set (source file removed)"
 else
-  echo
-  echo "==> Skipping the KUBECONFIG secret (--no-kubeconfig)"
-fi
-
-# --- private package pull secret --------------------------------------------
-
-if [ -n "$PULL_SECRET" ]; then
-  step "Creating the imagePullSecret in the cluster"
-  command -v kubectl >/dev/null 2>&1 || die "kubectl is required to create the pull secret"
-  kubectl config get-contexts -o name 2>/dev/null | grep -qx "$KUBE_CONTEXT" \
-    || die "context '$KUBE_CONTEXT' not found locally; run 'make kubeconfig' first"
-  [ -n "${GHCR_TOKEN:-}" ] || die "GHCR_TOKEN is not set (needs read:packages)"
-  [ -n "${GITHUB_USER:-}" ] || die "GITHUB_USER is not set (your GitHub login)"
-  KUBECONFIG_PATH="$KUBECONFIG_FILE" \
-    KUBE_CONTEXT="$KUBE_CONTEXT" \
-    ./scripts/create_image_pull_secret.sh "$PULL_SECRET"
+  echo "    note: no --yc-sa-key given. Both push and deploy fail on a missing YC_SA_KEY."
+  echo "          Create a SA key and re-run: ./scripts/setup_github.sh --yc-sa-key /tmp/ci-sa.json"
 fi
 
 # --- verify ------------------------------------------------------------------
@@ -108,17 +99,11 @@ cat <<EOF
 
 ==> Done.
 
-Two things are outside this script's reach:
+One thing is outside this script's reach:
 
-  1. The "Run workflow" button only appears for workflows that exist on the
-     default branch. Merge the PR to main first:
-       https://github.com/$REPO/pull/new/hw_09
-     (check the commit list - the branch carries an unrelated hw_08 commit)
-
-  2. If the GHCR package is private and no --pull-secret was given, the deploy
-     will sit in ImagePullBackOff. Either make the package public
-     (package -> Settings -> Change visibility -> Public) or re-run with
-     --pull-secret.
+  The "Run workflow" button only appears for workflows that exist on the
+  default branch. Merge the PR to main first:
+    https://github.com/$REPO/pull/new/hw_09
 
 Then: Actions -> hw_09 CI/CD -> Run workflow -> Run.
 EOF

@@ -15,9 +15,16 @@ token = ""
 cluster_name = "url-fraud-cluster"
 environment  = "production"
 
-zones               = ["ru-central1-a", "ru-central1-b", "ru-central1-d"]
+# ru-central1-c and ru-central1-b are frequently disabled for Managed
+# Kubernetes; a/d/e are the current candidates. Adjust to `yc compute zone list`.
+zones               = ["ru-central1-a", "ru-central1-d", "ru-central1-e"]
 network_cidr_blocks = ["10.130.0.0/24", "10.131.0.0/24", "10.132.0.0/24"]
-zone                = "ru-central1-a"
+
+# Control plane: regional = one master per zone (survives a zone loss) or
+# zonal = single master in `zone` (provisions much faster when capacity in
+# one of the zones above is constrained, e.g. ru-central1-e).
+master_regional = false
+zone            = "ru-central1-a"
 
 kubernetes_version = "1.33"
 node_count         = 3

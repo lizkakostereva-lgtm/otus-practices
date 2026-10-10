@@ -2,7 +2,7 @@
 #
 # Render and apply the k8s manifests.
 #
-#   ./scripts/deploy_k8s.sh ghcr.io/<user>/url-fraud-api:1.0.0
+#   ./scripts/deploy_k8s.sh cr.yandex/<registry-id>/url-fraud-api:1.0.0
 #   ./scripts/deploy_k8s.sh <image> --with-pull-secret ghcr-pull
 #   ./scripts/deploy_k8s.sh <image> --replicas 3 --wait 300 --with-hpa
 #

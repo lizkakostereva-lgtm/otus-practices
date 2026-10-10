@@ -5,17 +5,29 @@
 #   1. lint      — ruff check + format check (fast fail)
 #   2. test      — pytest with coverage, and a train-then-evaluate check
 #   3. build     — docker buildx, no push (catches broken images early)
-#   4. push      — build & push to GHCR (main, tags, or manual)
+#   4. push      — build & push to Yandex Container Registry (main, tags, manual)
 #   5. deploy    — optional: apply the k8s manifests, then smoke-test
 #
 # Secrets (Settings -> Secrets and variables -> Actions):
-#   KUBECONFIG            base64 of the cluster kubeconfig (deploy job only)
-#   KUBE_CONTEXT          kubectl context name (variable, not secret)
-#   IMAGE_PULL_SECRET     existing pull secret name (variable, optional)
+#   YC_SA_KEY     JSON authorized key of the CI service account (push AND deploy).
+#                 Needs: container-registry.images.pusher (push) and
+#                 k8s.cluster-api.cluster-admin + k8s.viewer (deploy).
+# Variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   YC_REGISTRY_ID  Yandex Container Registry id (cr.yandex/<id>/url-fraud-api)
+#   YC_FOLDER_ID    Yandex Cloud folder id (optional; defaults below)
+#   KUBE_CONTEXT    kubectl context name (default: url-fraud-cluster)
+#
+# The deploy job authenticates with the same SA key: it installs the `yc` CLI,
+# creates a profile from YC_SA_KEY and fetches the kubeconfig at runtime. A
+# stored KUBECONFIG secret is therefore NOT required (it would embed a local yc
+# path/profile that does not exist on a runner).
 #
 # Notes:
-#   - Pushing to GHCR uses the automatic GITHUB_TOKEN (packages: write), so no
-#     PAT is required.
+#   - Pushing to Yandex Container Registry authenticates with a service account
+#     authorized key: `docker login cr.yandex -u json_key -p <key-json>`. The SA
+#     needs container-registry.images.pusher.
+#   - Workloads pull from the same registry using the node group SA
+#     (container-registry.images.puller), so no imagePullSecret is needed.
 #   - workflow_dispatch: set BOTH push_image and deploy to publish and deploy.
 name: hw_09 CI/CD
 
@@ -33,7 +45,7 @@ on:
   workflow_dispatch:
     inputs:
       push_image:
-        description: "Push the image to GHCR"
+        description: "Push the image to Yandex Container Registry"
         type: boolean
         # Defaults are true so that the green "Run workflow" button in the UI is
         # the whole pipeline: lint -> test -> build -> push -> deploy -> smoke.
@@ -58,6 +70,9 @@ env:
   IMAGE_NAME: url-fraud-api
   NAMESPACE: url-fraud
   DEPLOY_DIR: hw_09
+  CLUSTER_NAME: url-fraud-cluster
+  # Image base in Yandex Container Registry (cr.yandex/<registry_id>/url-fraud-api)
+  YC_REGISTRY: cr.yandex/${{ vars.YC_REGISTRY_ID }}
 
 jobs:
   lint:
@@ -162,7 +177,7 @@ jobs:
           docker rm -f hw09-ci
 
   push:
-    name: Push to GHCR
+    name: Push to Yandex Container Registry
     runs-on: ubuntu-latest
     needs: [build]
     # No ternary in GitHub expressions, so the two triggers are spelled out.
@@ -172,7 +187,6 @@ jobs:
        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
     permissions:
       contents: read
-      packages: write
     outputs:
       # docker/metadata-action has no `full-tag` output, so the deployable ref is
       # resolved explicitly here: an immutable, full-SHA tag.
@@ -182,26 +196,35 @@ jobs:
 
       - id: ref
         name: Resolve image reference
+        env:
+          YC_REGISTRY_ID: ${{ vars.YC_REGISTRY_ID }}
         run: |
           set -euo pipefail
-          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          image="ghcr.io/${owner}/${IMAGE_NAME}:${GITHUB_SHA}"
+          if [ -z "$YC_REGISTRY_ID" ]; then
+            echo "::error::YC_REGISTRY_ID repository variable is not set" >&2
+            exit 1
+          fi
+          image="cr.yandex/${YC_REGISTRY_ID}/${IMAGE_NAME}:${GITHUB_SHA}"
           echo "image=${image}" >> "$GITHUB_OUTPUT"
           echo "Publishing ${image}"
 
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          # The automatic token already has packages: write for this repo.
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # Yandex Container Registry accepts a service-account authorized key as
+      # the password and the literal username `json_key`.
+      - name: Log into Yandex Container Registry
+        env:
+          YC_SA_KEY: ${{ secrets.YC_SA_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$YC_SA_KEY" ]; then
+            echo "::error::YC_SA_KEY secret is not set" >&2
+            exit 1
+          fi
+          echo "$YC_SA_KEY" | docker login cr.yandex -u json_key --password-stdin
 
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.YC_REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -239,37 +262,63 @@ jobs:
         with:
           version: v1.33.0
 
-      # Kubernetes secrets must not be echoed by `set -x`; keep them in a file
-      # that is removed in the same job.
-      - name: Restore kubeconfig
-        env:
-          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
+      - name: Install Yandex Cloud CLI
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.kube"
-          echo "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
-          chmod 600 "$HOME/.kube/config"
-          echo "kubeconfig restored"
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh \
+            | bash -s -- -i "$HOME/yandex-cloud" -n
+          echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
 
-      - name: Set up kubectl context
+      # Kubernetes secrets must not be echoed; the SA key lives in $RUNNER_TEMP
+      # and is removed in the final step of this job.
+      - name: Authenticate to Yandex Cloud
+        env:
+          YC_SA_KEY: ${{ secrets.YC_SA_KEY }}
+          YC_FOLDER_ID: ${{ vars.YC_FOLDER_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$YC_SA_KEY" ]; then
+            echo "::error::YC_SA_KEY secret is not set" >&2
+            exit 1
+          fi
+          FOLDER="${YC_FOLDER_ID:-b1gslcf31j2qksdat95l}"
+          install -m 600 /dev/null "$RUNNER_TEMP/sa-key.json"
+          printf '%s' "$YC_SA_KEY" > "$RUNNER_TEMP/sa-key.json"
+          yc config profile create ci
+          yc config set service-account-key "$RUNNER_TEMP/sa-key.json"
+          yc config set folder-id "$FOLDER"
+
+      - name: Fetch kubeconfig
         env:
           KUBE_CONTEXT: ${{ vars.KUBE_CONTEXT }}
+          YC_FOLDER_ID: ${{ vars.YC_FOLDER_ID }}
         run: |
           set -euo pipefail
           CONTEXT="${KUBE_CONTEXT:-url-fraud-cluster}"
-          kubectl config get-contexts -o name | grep -qx "$CONTEXT" \
-            || { echo "context '$CONTEXT' not found in the secret kubeconfig" >&2; exit 1; }
+          FOLDER="${YC_FOLDER_ID:-b1gslcf31j2qksdat95l}"
+          mkdir -p "$HOME/.kube"
+          yc managed-kubernetes cluster get-credentials \
+            --name "$CLUSTER_NAME" \
+            --folder-id "$FOLDER" \
+            --external \
+            --kubeconfig "$HOME/.kube/config" \
+            --context-name "$CONTEXT" \
+            --force
+          chmod 600 "$HOME/.kube/config"
+          echo "kubeconfig fetched as ${CONTEXT}"
 
       - name: Apply manifests
         working-directory: hw_09
         env:
           IMAGE: ${{ needs.push.outputs.image }}
           KUBE_CONTEXT: ${{ vars.KUBE_CONTEXT }}
-          IMAGE_PULL_SECRET: ${{ vars.IMAGE_PULL_SECRET }}
         run: |
           set -euo pipefail
           CONTEXT="${KUBE_CONTEXT:-url-fraud-cluster}"
 
+          # The cluster pulls from Yandex Container Registry with the node group
+          # service account (container-registry.images.puller), so no
+          # imagePullSecret is needed for these workloads.
           kubectl --context "$CONTEXT" apply -f k8s/00-namespace.yaml
           kubectl --context "$CONTEXT" apply -f k8s/10-configmap.yaml
           kubectl --context "$CONTEXT" apply -f k8s/20-deployment.yaml
@@ -280,24 +329,6 @@ jobs:
 
           if kubectl --context "$CONTEXT" --namespace url-fraud get hpa url-fraud-api >/dev/null 2>&1; then
             kubectl --context "$CONTEXT" apply -f k8s/50-hpa.yaml
-          fi
-
-          # GHCR packages are private by default, and the Deployment ships with
-          # imagePullSecrets commented out (k8s/20-deployment.yaml). When the
-          # variable is set, patch the field in. This has to happen after every
-          # `apply`, because a declarative apply of the unmodified manifest would
-          # drop the field again.
-          #
-          # Failing loudly here beats letting the rollout time out on
-          # ImagePullBackOff three minutes later.
-          if [ -n "${IMAGE_PULL_SECRET:-}" ]; then
-            kubectl --context "$CONTEXT" --namespace url-fraud \
-              get secret "$IMAGE_PULL_SECRET" >/dev/null \
-              || { echo "::error::pull secret '$IMAGE_PULL_SECRET' not found in namespace url-fraud"; exit 1; }
-            kubectl --context "$CONTEXT" --namespace url-fraud \
-              patch deployment url-fraud-api --type=strategic \
-              -p "{\"spec\":{\"template\":{\"spec\":{\"imagePullSecrets\":[{\"name\":\"${IMAGE_PULL_SECRET}\"}]}}}}"
-            echo "imagePullSecrets: $IMAGE_PULL_SECRET"
           fi
 
       - name: Rollout status
@@ -325,3 +356,9 @@ jobs:
           fi
           echo "Smoke testing http://${NODE_IP}:30080"
           API_BASE_URL="http://${NODE_IP}:30080" ./scripts/smoke_test.sh
+
+      # The kubeconfig exec plugin keeps authenticating via `yc`, so the SA key
+      # file must stay for the whole job; drop it only now.
+      - name: Remove YC service-account key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa-key.json"

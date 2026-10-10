@@ -75,6 +75,16 @@ variable "kubernetes_version" {
   default     = "1.33"
 }
 
+variable "master_regional" {
+  description = <<-EOT
+    Regional control plane (one master per zone, survives a zone loss) or a
+    single zonal master in var.zone. The zonal option provisions much faster and
+    is the right pick when compute capacity in some zones is constrained.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "node_count" {
   description = "Number of nodes in the group (the homework asks for 3)."
   type        = number

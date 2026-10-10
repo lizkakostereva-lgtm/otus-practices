@@ -1,3 +1,13 @@
+output "registry_id" {
+  description = "ID of the Yandex Container Registry (image base: cr.yandex/<id>/url-fraud-api)."
+  value       = yandex_container_registry.main.id
+}
+
+output "registry_image" {
+  description = "Full image base reference in the Yandex Container Registry."
+  value       = "cr.yandex/${yandex_container_registry.main.id}/url-fraud-api"
+}
+
 output "cluster_id" {
   description = "Managed Kubernetes cluster ID"
   value       = yandex_kubernetes_cluster.main.id

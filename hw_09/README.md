@@ -1,7 +1,8 @@
 # hw_09 — REST API классификатора вредоносных URL
 
 ML-сервис production-уровня: классификатор на scikit-learn за REST API на
-FastAPI, упакованный в контейнер, выложенный в GHCR, задеплоенный в
+FastAPI, упакованный в контейнер, выложенный в Yandex Container Registry,
+задеплоенный в
 3-узловый Managed Kubernetes в Yandex Cloud и доступный из интернета.
 
 Модель отвечает на один вопрос: **вредоносный ли этот URL?**
@@ -402,18 +403,20 @@ Silicon для локальных запусков можно переопред
 make build PLATFORM=linux/arm64
 ```
 
-### Пуш в GHCR
+### Пуш в Yandex Container Registry
 
-Владелец в GHCR берётся из remote `origin`, так что переменные не нужны:
+Образ живёт в `cr.yandex/<registry-id>/url-fraud-api`. Registry-идентификатор
+берётся из `terraform output` (registry создаётся вместе с кластером), поэтому
+переменные не нужны:
 
 ```bash
-make -n push          # покажет ghcr.io/lizkakostereva-lgtm/url-fraud-api:<sha>
-make login-registry   # docker login ghcr.io, читает GITHUB_USER / GHCR_TOKEN
-make push
+cd terraform && terraform output registry_id     # cr.yandex/<id>/url-fraud-api
+make push          # cr.yandex/<registry-id>/url-fraud-api:<sha>
 ```
 
-Переопределить при необходимости: `make push IMAGE_TAG=1.0.0
-GITHUB_OWNER=my-org`.
+`make login-registry` логинится в `cr.yandex` текущим IAM-токеном `yc` (`oauth`).
+Пул в кластере выполняется сервис-аккаунтом нод
+(`container-registry.images.puller`), поэтому `imagePullSecret` не нужен.
 
 ---
 
@@ -432,7 +435,7 @@ test ─┘
 | `lint`   | PR, push в `main`, тег, ручной запуск                | `ruff check` + `ruff format --check`                                         |
 | `test`   | то же                                                | `pytest` с coverage, затем ре-обучение на малой выборке как защита от регрессий |
 | `build`  | после обоих                                          | `docker buildx` build, затем запуск образа и вызов API внутри него            |
-| `push`   | `main`, теги `v*` или ручной запуск с `push_image`  | Сборка и пуш в GHCR с тегами `branch`, `sha`, `latest` и semver               |
+| `push`   | `main`, теги `v*` или ручной запуск с `push_image`  | Сборка и пуш в Yandex Container Registry с тегами `branch`, `sha`, `latest` и semver |
 | `deploy` | теги `v*` или ручной запуск с `deploy=true`          | Применение k8s-манифестов, ожидание rollout, прогон smoke-теста               |
 
 `build` намеренно поднимает контейнер и дёргает `/api/v1/predict` до того, как
@@ -457,36 +460,53 @@ Repository **Settings → Secrets and variables → Actions**:
 
 | Имя                | Тип     | Зачем                                                  |
 | ------------------ | ------- | ------------------------------------------------------ |
-| `KUBECONFIG`       | secret  | `deploy` — base64 kubeconfig кластера                  |
+| `YC_SA_KEY`        | secret  | JSON authorized key CI-сервис-аккаунта: `push` (docker login `json_key`) и `deploy` (yc-профиль + kubeconfig) |
+| `YC_REGISTRY_ID`   | var     | ID реестра: `cr.yandex/<id>/url-fraud-api`              |
+| `YC_FOLDER_ID`     | var     | ID каталога (не секрет; по умолчанию `b1gslcf31j2qksdat95l`) |
 | `KUBE_CONTEXT`     | var     | Имя контекста, по умолчанию `url-fraud-cluster`        |
-| `IMAGE_PULL_SECRET`| var     | Имя существующего pull-секрета, если пакет приватный   |
+
+`KUBECONFIG`-секрет **не нужен**: `deploy` ставит `yc` CLI, создаёт профиль из
+`YC_SA_KEY` и получает kubeconfig в рантайме. Сохранённый kubeconfig содержал бы
+локальный путь к `yc` и имя профиля, которых на раннере нет.
 
 Полезные флаги:
 
 ```bash
-./scripts/setup_github.sh --no-kubeconfig              # только CI, кластера ещё нет
-./scripts/setup_github.sh --pull-secret ghcr-pull       # приватный GHCR-пакет
+./scripts/setup_github.sh --yc-sa-key /tmp/ci-sa.json  # залить ключ CI-аккаунта
+./scripts/setup_github.sh --yc-registry-id crpdbsjt55qgo4mhjb8j
 ```
 
-`--pull-secret` дополнительно создаёт сам секрет в кластере и требует
-`GHCR_TOKEN` (PAT с `read:packages`) и `GITHUB_USER`. Без этого флага при
-приватном пакете деплой уйдёт в `ImagePullBackOff` — job теперь проверяет
-наличие секрета и падает сразу с понятной ошибкой.
+CI-сервис-аккаунт и ключ создаются один раз (см. шапку `setup_github.sh`).
+Роли: `container-registry.images.pusher` (push) и `k8s.viewer` +
+`k8s.cluster-api.cluster-admin` (deploy):
+
+```bash
+yc iam service-account create --name url-fraud-ci-sa --folder-id <folder-id>
+yc container registry add-access-binding --id <registry-id> \
+  --role container-registry.images.pusher \
+  --service-account-id <sa-id>
+yc resource-manager folder add-access-binding <folder-id> \
+  --role k8s.viewer --service-account-id <sa-id>
+yc resource-manager folder add-access-binding <folder-id> \
+  --role k8s.cluster-api.cluster-admin --service-account-id <sa-id>
+yc iam key create --service-account-id <sa-id> --output /tmp/ci-sa.json \
+  --folder-id <folder-id>
+```
+
+`--yc-sa-key` загружает ключ в секрет `YC_SA_KEY` и удаляет локальный файл.
+Без него push-джоба падает сразу с понятной ошибкой.
 
 > **Кнопка «Run workflow» появится только после merge в `main`.** GitHub
 > показывает ручной запуск лишь для workflow, который лежит в ветке по
 > умолчанию. Это и есть то, что делает пайплайн запускаемым одной кнопкой:
 > https://github.com/lizkakostereva-lgtm/otus-practices/pull/new/hw_09
 
-PAT не нужен: `push` и `deploy` используют автоматический `GITHUB_TOKEN`,
-который уже имеет `packages: write` для этого репозитория. Локальный
-`GHCR_TOKEN` требуется только для `make login-registry` на своей машине.
+Патент для **push** не нужен: `docker login cr.yandex` для CI-джобы
+аутентифицируется сервис-аккаунтом (`YC_SA_KEY`), а локально — IAM-токеном из
+`make login-registry`.
 
-Создать base64-секрет с kubeconfig вручную:
-
-```bash
-base64 < ~/.kube/config-url-fraud-cluster | tr -d '\n'   # macOS и Linux одинаково
-```
+`deploy` тоже не требует отдельного секрета: джоба сама получает kubeconfig
+через `yc` и `YC_SA_KEY`.
 
 Job `deploy` закрыт environment `production` — добавьте туда обязательного
 ревьюера, если нужен человек в контуре.
@@ -515,8 +535,10 @@ Job `deploy` закрыт environment `production` — добавьте туда
 VPC  url-fraud-net
 ├── shared egress gateway  url-fraud-nat      ← у сети default нет route table
 ├── route table            0.0.0.0/0 → gateway
-├── 3 node subnets         10.130/10.131/10.132.0.0/24  (a/b/d)
-└── 3 master subnets       10.140/10.141/10.142.0.0/24  (a/b/d)
+├── 3 node subnets         10.130/10.131/10.132.0.0/24  (a/d/e)
+└── 3 master subnets       10.140/10.141/10.142.0.0/24  (a/d/e)
+
+Yandex Container Registry  url-fraud-registry  cr.yandex/<id>/url-fraud-api
 
 Managed Kubernetes  url-fraud-cluster        региональный, 3 master, k8s 1.33
 └── node group      url-fraud-workers       fixed_scale = 3, по одной на зону
@@ -525,7 +547,7 @@ Managed Kubernetes  url-fraud-cluster        региональный, 3 master,
 ```
 
 Выделенная сеть вместо общей `default`, потому что у тех подсетей нет route
-table: ноды остались бы без egress и не смогли бы стянуть образ из GHCR.
+table: ноды остались бы без egress и не смогли бы стянуть образ из реестра.
 
 ### Шаг 1 — аутентификация
 
@@ -558,7 +580,8 @@ yc managed-kubernetes list-versions
 
 В `terraform.tfvars.example` уже проставлены ID облака и каталога этого
 аккаунта, так что достаточно `cp` + `make tf-init`. Перед apply убедитесь, что
-в списке зон есть `ru-central1-a`, `-b` и `-c`.
+в списке зон есть три доступные (сейчас `a`, `d` и `e` — `c` и `b` часто
+выключены для Managed Kubernetes).
 
 Оставьте `token = ""`, чтобы переиспользовать профиль `yc` CLI — это
 рекомендуется, тогда секрет вообще не попадает в файлы. `terraform.tfvars` в
@@ -602,15 +625,11 @@ kubectl --context url-fraud-cluster get nodes
 ### Шаг 5 — запушить образ
 
 ```bash
-export GHCR_USER=<your-github-login>
-export GHCR_TOKEN=<PAT with write:packages>
-
-make push          # ghcr.io/<your-github-login>/url-fraud-api:<sha>
-
-# только если пакет GHCR приватный
-export GITHUB_USER=<your-github-login>
-make pull-secret      # создаёт секрет ghcr-pull
+make push          # cr.yandex/<registry-id>/url-fraud-api:<sha> (логинится IAM-токеном)
 ```
+
+Пул образа нодами выполняется сервис-аккаунтом группы нод
+(`container-registry.images.puller`), поэтому секрет для pull не нужен.
 
 ### Шаг 6 — задеплоить приложение
 
@@ -626,12 +645,10 @@ kubectl --context url-fraud-cluster apply -f k8s/00-namespace.yaml
 kubectl --context url-fraud-cluster apply -f k8s/10-configmap.yaml
 kubectl --context url-fraud-cluster apply -f k8s/20-deployment.yaml
 kubectl --context url-fraud-cluster -n url-fraud \
-  set image deployment/url-fraud-api api=ghcr.io/<you>/url-fraud-api:1.0.0
+  set image deployment/url-fraud-api api=cr.yandex/<registry-id>/url-fraud-api:1.0.0
 kubectl --context url-fraud-cluster apply -f k8s/30-service-nodeport.yaml
 kubectl --context url-fraud-cluster -n url-fraud rollout status deployment/url-fraud-api
 ```
-
-С приватным образом добавьте `--with-pull-secret ghcr-pull`.
 
 ### Шаг 7 — дёрнуть публичное API
 

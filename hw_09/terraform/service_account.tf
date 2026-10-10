@@ -13,10 +13,8 @@
 #       - vpc.publicAdmin    - required here because both the control plane and
 #                              the worker nodes get public addresses.
 #   * Node group SA - authenticates to the container registry:
-#       - container-registry.images.puller - only needed for Yandex Container
-#         Registry. We pull from GHCR, so it is not strictly required; it is
-#         granted anyway so that a YC-registry mirror works without a code
-#         change.
+#       - container-registry.images.puller - required to pull the API image
+#         from the Yandex Container Registry created in container_registry.tf.
 #
 # The identity running `terraform apply` needs its own roles for this to work:
 # k8s.editor or higher, iam.serviceAccounts.user, and vpc.publicAdmin for

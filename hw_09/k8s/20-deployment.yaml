@@ -49,7 +49,10 @@ spec:
       containers:
         - name: api
           # Overridden by scripts/deploy_k8s.sh and by the CI deploy job.
-          image: ghcr.io/YOUR_GITHUB_USERNAME/url-fraud-api:1.0.0
+          # Workloads pull from Yandex Container Registry via the node group
+          # service account (container-registry.images.puller), so no
+          # imagePullSecret is required.
+          image: cr.yandex/REGISTRY_ID/url-fraud-api:1.0.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -117,5 +120,8 @@ spec:
         # readOnlyRootFilesystem means /tmp must be a writable emptyDir.
         - name: tmp
           emptyDir: {}
+      # Private external registries (e.g. GHCR) would need an imagePullSecret
+      # pinned here. Yandex Container Registry is pulled with the node SA, so
+      # leave this commented out:
       # imagePullSecrets:
-      #   - name: ghcr-pull   # uncomment for a private GHCR package
+      #   - name: registry-pull

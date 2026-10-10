@@ -5,12 +5,11 @@ SHELL := /bin/bash
 IMAGE_NAME      ?= url-fraud-api
 IMAGE_TAG       ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 IMAGE           ?= $(IMAGE_NAME):$(IMAGE_TAG)
-REGISTRY        ?= ghcr.io
-# GHCR requires the GitHub account (or org) as the first path segment. Derive it
-# from the origin remote so `make push` targets the right namespace by default.
-# NB: no '#' delimiters here - make treats them as comments inside $(shell).
-GITHUB_OWNER    ?= $(shell git config --get remote.origin.url 2>/dev/null | sed -E 's|^git@github\.com:||; s|^https?://github\.com/||; s|\.git$$||' | cut -d/ -f1)
-PUSH_IMAGE      ?= $(REGISTRY)/$(GITHUB_OWNER)/$(IMAGE_NAME)
+# Images live in the Yandex Container Registry, cr.yandex/<registry-id>/<image>.
+# The registry id is read from `terraform output` after `make tf-apply`.
+REGISTRY        ?= cr.yandex
+YC_REGISTRY_ID  ?= $(shell cd terraform 2>/dev/null && terraform output -raw registry_id 2>/dev/null || echo "")
+PUSH_IMAGE      ?= $(REGISTRY)/$(YC_REGISTRY_ID)/$(IMAGE_NAME)
 # Yandex Cloud nodes are amd64. Building the default platform means the image you
 # test locally is the image that gets deployed. On Apple Silicon you can override
 # it for faster native iteration: PLATFORM=linux/arm64 make build
@@ -120,15 +119,17 @@ compose-down: ## Stop the compose stack
 	docker compose down -v
 
 .PHONY: login-registry
-login-registry: ## Log into the container registry (needs GHCR_TOKEN)
-	@test -n "$(GHCR_TOKEN)" || { echo "export GHCR_TOKEN=<github PAT with write:packages>"; exit 1; }
-	@echo "$$GHCR_TOKEN" | docker login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin
+login-registry: ## Log into Yandex Container Registry with the current IAM token
+	@test -n "$(YC_REGISTRY_ID)" || { echo "run 'make tf-apply' first or export YC_REGISTRY_ID"; exit 1; }
+	@yc iam create-token | docker login $(REGISTRY) -u oauth --password-stdin
 
 .PHONY: push
-push: ## Push the image to GHCR (owner derived from git remote)
+push: ## Push the image to Yandex Container Registry (cr.yandex/<registry-id>/url-fraud-api)
+	@test -n "$(YC_REGISTRY_ID)" || { echo "run 'make tf-apply' first or export YC_REGISTRY_ID"; exit 1; }
 	@$(MAKE) --no-print-directory login-registry
 	docker tag $(IMAGE) $(PUSH_IMAGE):$(IMAGE_TAG)
 	docker push $(PUSH_IMAGE):$(IMAGE_TAG)
+	@echo "pushed: $(PUSH_IMAGE):$(IMAGE_TAG)"
 
 # ------------------------------------------------------------- kubernetes ---
 .PHONY: tf-init
@@ -152,7 +153,7 @@ kubeconfig: ## Download the cluster kubeconfig to ~/.kube/config-url-fraud-clust
 	@./scripts/get_kubeconfig.sh "$(KUBECONFIG_PATH)"
 
 .PHONY: pull-secret
-pull-secret: ## Create the GHCR imagePullSecret in the cluster
+pull-secret: ## Create an imagePullSecret for a private external registry (needs REGISTRY/GHCR_TOKEN)
 	@./scripts/create_image_pull_secret.sh
 
 .PHONY: gh-setup

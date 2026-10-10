@@ -25,16 +25,28 @@ resource "yandex_kubernetes_cluster" "main" {
   master {
     version = var.kubernetes_version
 
-    # Regional control plane: 3 masters, one per zone -> survives a zone loss.
-    regional {
-      region = "ru-central1"
+    # Regional control plane: one master per zone -> survives a zone loss.
+    # Zonal alternative when capacity is constrained (see var.master_regional).
+    dynamic "regional" {
+      for_each = var.master_regional ? [1] : []
+      content {
+        region = "ru-central1"
 
-      dynamic "location" {
-        for_each = toset(var.zones)
-        content {
-          zone      = location.value
-          subnet_id = local.master_subnets_by_zone[location.value]
+        dynamic "location" {
+          for_each = toset(var.zones)
+          content {
+            zone      = location.value
+            subnet_id = local.master_subnets_by_zone[location.value]
+          }
         }
+      }
+    }
+
+    dynamic "zonal" {
+      for_each = var.master_regional ? [] : [1]
+      content {
+        zone      = var.zone
+        subnet_id = local.master_subnets_by_zone[var.zone]
       }
     }
 
@@ -81,9 +93,8 @@ resource "yandex_kubernetes_node_group" "workers" {
   }
 
   node_labels = {
-    project                          = "url-fraud"
-    role                             = "worker"
-    "node-role.kubernetes.io/worker" = ""
+    project = "url-fraud"
+    role    = "worker"
   }
 
   scale_policy {

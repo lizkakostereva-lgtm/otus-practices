@@ -17,7 +17,8 @@ data/*
 *.tf.plan
 crash.log
 
-# Local overrides
+# Local secrets (kubeconfig, SA authorized keys) — NEVER commit
+.secrets/
 .env
 .env.*
 !.env.example

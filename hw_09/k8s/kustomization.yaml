@@ -1,7 +1,7 @@
 # Base manifests for the URL fraud API.
 #
 #   kubectl apply -k k8s/
-#   kubectl -n url-fraud set image deployment/url-fraud-api api=ghcr.io/<user>/url-fraud-api:<tag>
+#   kubectl -n url-fraud set image deployment/url-fraud-api api=cr.yandex/<registry-id>/url-fraud-api:<tag>
 #
 # 40-ingress.yaml is intentionally NOT listed: it needs a domain and a Load
 # Balancer. Apply it separately if you go down that route.
@@ -19,9 +19,11 @@ resources:
   - 60-pdb.yaml
 
 # Replace this with your own image; scripts/deploy_k8s.sh patches it in place.
+# Image lives in the Yandex Container Registry; scripts/deploy_k8s.sh and the
+# CI deploy job patch the actual tag via `kubectl set image`.
 images:
-  - name: ghcr.io/YOUR_GITHUB_USERNAME/url-fraud-api
-    newName: ghcr.io/YOUR_GITHUB_USERNAME/url-fraud-api
+  - name: cr.yandex/REGISTRY_ID/url-fraud-api
+    newName: cr.yandex/REGISTRY_ID/url-fraud-api
     newTag: "1.0.0"
 
 commonLabels:
