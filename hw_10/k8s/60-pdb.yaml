@@ -1,0 +1,16 @@
+# PodDisruptionBudget: during voluntary disruptions (node drain, cluster
+# upgrade) keep the service serving. Expressed as a percentage so it keeps
+# working while the HPA moves the replica count between 4 and 6.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: url-fraud-api

@@ -1,0 +1,6 @@
+# Runtime deps for the standalone retraining job (mlops/retrain.py).
+# Extends the API runtime with MLflow + the S3 client used to pull the dataset.
+-r ../requirements.txt
+
+mlflow==2.22.0
+boto3==1.40.0

@@ -1,0 +1,139 @@
+# Production Deployment.
+#
+# hw_10 requirement: the deployment policy must be able to scale the model from
+# 4 to 6 replicas. The HPA (k8s/50-hpa.yaml) owns the replica count and is
+# pinned to exactly that range; `replicas: 4` below is the steady-state floor
+# used before the HPA reconciles (and by `kubectl apply` on a fresh cluster).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: url-fraud
+  annotations:
+    # Roll the pods when this config changes; deploy_k8s.sh rewrites it with a
+    # checksum so a ConfigMap edit actually restarts the rollout.
+    checksum/config: "replaced-by-deploy-script"
+spec:
+  # Do NOT manage this field after the HPA is active: leaving `replicas` set on
+  # a Deployment that an HPA targets would make every `kubectl apply` fight the
+  # autoscaler. It stays here as the documented floor and for name-based tools.
+  replicas: 4
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: url-fraud-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: url-fraud-api
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: url-fraud
+      annotations:
+        # Belt and braces: the ServiceMonitor is the primary scrape config, but
+        # these annotations let a plain prometheus.io-scrape Prometheus (or a
+        # `prometheus.io/scrape` based agent) pick the pods up as well.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Spread replicas across nodes; with 3 nodes and up to 6 replicas this
+      # keeps the service available if a single node is lost.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: url-fraud-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Give in-flight predictions time to finish before the pod is killed.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api
+          # Overridden by scripts/deploy_k8s.sh and by the CI deploy job.
+          # Workloads pull from Yandex Container Registry via the node group
+          # service account (container-registry.images.puller), so no
+          # imagePullSecret is required.
+          image: cr.yandex/REGISTRY_ID/url-fraud-api:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: url-fraud-api-config
+          env:
+            # An empty ConfigMap value would break model loading, so pin the
+            # artifact paths explicitly.
+            - name: MODEL_PATH
+              value: /app/models/model.joblib
+            - name: MODEL_METADATA_PATH
+              value: /app/models/metadata.json
+          # The API is pure CPU. The request is what the HPA divides usage by,
+          # so it doubles as the "100% load" reference for the alert rule.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # No CPU limit on purpose: throttling would add latency spikes to
+              # an inference call that is normally a few milliseconds.
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 20
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            # /readyz returns 503 until the model is loaded, so traffic is only
+            # routed to pods that can actually serve predictions.
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 2
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # readOnlyRootFilesystem means /tmp must be a writable emptyDir.
+        - name: tmp
+          emptyDir: {}

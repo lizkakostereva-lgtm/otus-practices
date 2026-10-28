@@ -1,0 +1,25 @@
+# Public entry point for the API *and* the scrape target for Prometheus.
+#
+# NodePort keeps the demo cheap: any node's public IP + nodePort reaches the API
+# (http://<node-ip>:30080). Switch spec.type to LoadBalancer for a stable public
+# IP instead; the port naming (`http`) is what the ServiceMonitor keys on.
+apiVersion: v1
+kind: Service
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  type: NodePort
+  externalTrafficPolicy: Cluster
+  selector:
+    app.kubernetes.io/name: url-fraud-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080
+      protocol: TCP

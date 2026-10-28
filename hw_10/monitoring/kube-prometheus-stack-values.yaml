@@ -1,0 +1,116 @@
+# Helm values for the kube-prometheus-stack chart (Prometheus + Alertmanager +
+# Grafana + kube-state-metrics + node-exporter).
+#
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring --create-namespace \
+#     -f monitoring/kube-prometheus-stack-values.yaml
+#
+# `make monitoring` wraps exactly that.
+#
+# Design notes
+#   * Prometheus keeps everything in an emptyDir for the homework. Swap to a
+#     StorageClass-backed PVC (see `storageSpec`) before any real use.
+#   * The selector overrides make Prometheus pick up the ServiceMonitor and the
+#     PrometheusRule that live in the *url-fraud* namespace, not only the
+#     objects created by this Helm release.
+#   * Grafana is exposed on a NodePort (30300) so the dashboards are reachable
+#     from outside the VPC without a Load Balancer.
+
+fullnameOverride: kube-prometheus-stack
+
+# ----------------------------------------------------------------- prometheus
+prometheus:
+  prometheusSpec:
+    # Discover ServiceMonitors / PrometheusRules / AlertmanagerConfigs in ALL
+    # namespaces, otherwise the url-fraud objects are ignored.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    ruleNamespaceSelector: {}
+    podMonitorNamespaceSelector: {}
+    probeNamespaceSelector: {}
+
+    retention: 6h
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+
+    # Small cluster: keep the footprint modest, still enough to survive a demo.
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+    # Persist across restarts of the Prometheus pod (emptyDir -> grows with the
+    # node, no cloud disk to provision for the homework).
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+  # Scrape the API's ServiceMonitor even though it is not labelled with the
+  # Helm release (the nil-selector overrides above already allow this; the
+  # explicit rule here documents the intent).
+  additionalScrapeConfigs: []
+
+# --------------------------------------------------------------- alertmanager
+alertmanager:
+  alertmanagerSpec:
+    # Pick up AlertmanagerConfig objects from every namespace.
+    alertmanagerConfigSelector: {}
+    alertmanagerConfigNamespaceSelector: {}
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+  # The routing tree / receivers come from AlertmanagerConfig CRs
+  # (monitoring/alertmanager/alertmanager-config.yaml), not from values, so the
+  # SMTP password never lands in the Helm values file.
+  config:
+    global:
+      resolve_timeout: 5m
+
+# --------------------------------------------------------------------- grafana
+grafana:
+  # Demo credentials; override with `adminPassword`+`existingSecret` in prod.
+  adminPassword: url-fraud-grafana
+  service:
+    type: NodePort
+    nodePort: 30300
+    port: 80
+  # Sidecar that turns ConfigMaps labelled `grafana_dashboard: "1"` into
+  # dashboards (scripts/deploy_monitoring.sh creates them from the JSON files).
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+  defaultDashboardsTimezone: browser
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# ----------------------------------------------------------- kube-state-metrics
+kube-state-metrics:
+  # `kube_deployment_status_replicas_available` and the HPA metrics the alert
+  # rule depends on are emitted by KSM, which the chart installs by default.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+# ---------------------------------------------------------------- node-exporter
+# Enabled by default; the cluster dashboard uses its CPU/memory series.

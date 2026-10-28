@@ -1,0 +1,28 @@
+# ServiceMonitor: how kube-prometheus-stack discovers the API for scraping.
+#
+# Requires the Prometheus Operator CRDs (installed by the kube-prometheus-stack
+# Helm release, see monitoring/kube-prometheus-stack-values.yaml). The Helm
+# values disable the "only my release" selectors, so this object in the
+# url-fraud namespace is picked up by the cluster Prometheus.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/part-of: url-fraud
+    # Matched by `serviceMonitorSelector` in the Helm values.
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - url-fraud
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: url-fraud-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

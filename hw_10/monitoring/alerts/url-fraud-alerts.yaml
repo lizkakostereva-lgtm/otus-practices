@@ -1,0 +1,172 @@
+# Prometheus alerting rules for the url-fraud model.
+#
+# The headline rule is `UrlFraudScalingSaturated`: it implements the assignment
+# verbatim — notify the sysadmin when SIX model replicas are running AND the CPU
+# load on any replica exceeds 80% for five minutes.
+#
+# Metric sources
+#   * kube_deployment_status_replicas_available / _spec_replicas
+#   * kube_horizontalpodautoscaler_status_current_replicas   (kube-state-metrics)
+#   * container_cpu_usage_seconds_total                      (cAdvisor)
+#   * kube_pod_container_resource_requests                   (kube-state-metrics)
+#
+# "Load" uses the exact same definition the HPA does: CPU seconds/second of the
+# container divided by its CPU *request* (100m in k8s/20-deployment.yaml). One
+# CPU request worth of usage == 1.0 == 100% load.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: url-fraud-alerts
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/part-of: url-fraud
+    # Matched by `ruleSelector` (nil-value override in the Helm values).
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: url-fraud.model.rules
+      rules:
+        # ------------------------------------------------------ THE alert -----
+        # 6 replicas AND per-pod CPU load > 80%, both true for 5 minutes.
+        #
+        # `and on()` joins the two sides on no labels, so the result keeps one
+        # series per hot pod, but only while the "6 replicas" side is non-empty.
+        # `for: 5m` then requires the whole conjunction to hold continuously.
+        - alert: UrlFraudScalingSaturated
+          expr: |
+            (
+              max(
+                kube_deployment_status_replicas_available{
+                  namespace="url-fraud", deployment="url-fraud-api"
+                }
+              ) >= 6
+              or
+              max(
+                kube_horizontalpodautoscaler_status_current_replicas{
+                  namespace="url-fraud", horizontalpodautoscaler="url-fraud-api"
+                }
+              ) >= 6
+            )
+            and on()
+            (
+              max by (pod) (
+                sum by (pod) (
+                  rate(container_cpu_usage_seconds_total{
+                    namespace="url-fraud", container="api"
+                  }[5m])
+                )
+                /
+                sum by (pod) (
+                  kube_pod_container_resource_requests{
+                    namespace="url-fraud", container="api", resource="cpu"
+                  }
+                )
+              ) > 0.8
+            )
+          for: 5m
+          labels:
+            severity: critical
+            team: sre
+            component: url-fraud-api
+          annotations:
+            summary: "url-fraud: 6 replicas saturated (>80% CPU for 5m)"
+            description: >-
+              The URL fraud API has scaled out to its ceiling of 6 replicas and
+              at least one pod ({{ $labels.pod }}) is running above 80% of its
+              CPU request for more than five minutes. This is the
+              scaling-saturation condition: capacity is exhausted, latency may
+              degrade. Investigate the traffic source and consider raising
+              maxReplicas / node capacity.
+
+        # ------------------------------------------------- helpful context ----
+        # Same load signal, independent of the replica count. Fires first and
+        # gives the sysadmin a heads-up before the ceiling is hit.
+        - alert: UrlFraudPodHighCpu
+          expr: |
+            max by (pod) (
+              sum by (pod) (
+                rate(container_cpu_usage_seconds_total{
+                  namespace="url-fraud", container="api"
+                }[5m])
+              )
+              /
+              sum by (pod) (
+                kube_pod_container_resource_requests{
+                  namespace="url-fraud", container="api", resource="cpu"
+                }
+              )
+            ) > 0.8
+          for: 5m
+          labels:
+            severity: warning
+            team: sre
+            component: url-fraud-api
+          annotations:
+            summary: "url-fraud: pod {{ $labels.pod }} above 80% CPU for 5m"
+            description: "Pod {{ $labels.pod }} has been above 80% of its CPU request for 5 minutes."
+
+        # Replicas pinned at the HPA ceiling (6). On its own this is not an
+        # incident, it is the precondition half of the headline alert.
+        - alert: UrlFraudAtMaxReplicas
+          expr: |
+            (
+              max(kube_deployment_status_replicas_available{
+                namespace="url-fraud", deployment="url-fraud-api"}) >= 6
+              or
+              max(kube_horizontalpodautoscaler_status_current_replicas{
+                namespace="url-fraud", horizontalpodautoscaler="url-fraud-api"}) >= 6
+            )
+          for: 5m
+          labels:
+            severity: info
+            team: sre
+            component: url-fraud-api
+          annotations:
+            summary: "url-fraud: autoscaled to max replicas (6)"
+            description: "The deployment reached its maxReplicas=6 ceiling."
+
+        # Availability guard: no ready replica is a real outage for the API.
+        - alert: UrlFraudNoAvailableReplicas
+          expr: |
+            max(kube_deployment_status_replicas_available{
+              namespace="url-fraud", deployment="url-fraud-api"}) < 1
+          for: 2m
+          labels:
+            severity: critical
+            team: sre
+            component: url-fraud-api
+          annotations:
+            summary: "url-fraud: no available replicas"
+            description: "The url-fraud-api deployment has zero available replicas."
+
+    # Model-quality side of monitoring. These series are exported by the API
+    # itself (app/main.py) and scraped through the ServiceMonitor.
+    - name: url-fraud.model-quality.rules
+      rules:
+        - record: url_fraud:predictions_bad_rate:5m
+          expr: |
+            sum(rate(url_fraud_predictions_total{result="bad"}[5m]))
+            /
+            clamp_min(sum(rate(url_fraud_predictions_total[5m])), 1e-9)
+
+        # If the fraction of URLs labelled "bad" drifts far from the training
+        # positive rate (~0.16) it usually means the input distribution shifted
+        # and the model should be retrained — the Airflow DAG's cue.
+        - alert: UrlFraudPredictionDrift
+          expr: |
+            (
+              url_fraud:predictions_bad_rate:5m > 0.5
+            )
+            and
+            (
+              sum(rate(url_fraud_predictions_total[10m])) > 10
+            )
+          for: 15m
+          labels:
+            severity: warning
+            team: sre
+            component: url-fraud-api
+          annotations:
+            summary: "url-fraud: prediction drift (>50% classified bad for 15m)"
+            description: "More than half of recent predictions are 'bad'; the input distribution may have shifted. Consider a retraining run."
