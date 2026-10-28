@@ -1,0 +1,54 @@
+# Autoscaling: the model policy from the assignment — 4 replicas at rest,
+# scaling out to at most 6 when CPU load climbs.
+#
+# Why averageUtilization: 60 and not the usual 70:
+#   * the alert we must demonstrate fires when *6 replicas are live AND a pod
+#     is above 80% load*. A lower target makes the deployment reach its ceiling
+#     (6) sooner under the Kafka attack, so the "replicas == max" condition is
+#     actually observable while individual pods stay hot.
+#   * the metric is CPU usage / CPU request (100m in 20-deployment.yaml), which
+#     is why the alert rule uses exactly the same expression family.
+#
+# Requires metrics-server (installed by terraform or the kube-prometheus-stack
+# values file) and the resource request already set on the container.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: url-fraud-api
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: url-fraud-api
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: url-fraud-api
+  minReplicas: 4
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    scaleUp:
+      # React quickly to the attack so the demo does not stall.
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+      selectPolicy: Max
+    scaleDown:
+      # Inference is bursty; do not thrash the replica count after the attack.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: url-fraud
+  labels:
+    app.kubernetes.io/part-of: url-fraud
+    # Let kube-prometheus-stack pick up ServiceMonitors in this namespace
+    # (helm value `serviceMonitorNamespaceSelector` / `...NilUsesHelmValues`).
+    monitoring: enabled
+    # Pod Security: API hardened, allow third-party charts (Airflow, Kafka, Postgres)
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

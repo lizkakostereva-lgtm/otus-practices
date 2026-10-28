@@ -1,0 +1,78 @@
+# Helm values for the in-cluster Apache Airflow.
+executor: "KubernetesExecutor"
+redis:
+  enabled: false
+
+dags:
+  persistence:
+    enabled: false
+  gitSync:
+    enabled: true
+    repo: "https://github.com/lizkakostereva-lgtm/otus-practices.git"
+    branch: "hw_10"
+    rev: "HEAD"
+    subPath: "hw_10/airflow/dags"
+    depth: 1
+    period: 30s
+    wait: 5
+    containerName: git-sync
+    uid: 65533
+    securityContext:
+      runAsUser: 65533
+      runAsGroup: 65533
+      runAsNonRoot: true
+
+postgresql:
+  enabled: true
+  auth:
+    username: airflow
+    database: airflow
+    password: airflow
+
+scheduler:
+  replicas: 1
+  resources:
+    requests: { cpu: "250m", memory: "512Mi" }
+    limits: { memory: "1Gi" }
+
+workers:
+  replicas: 0
+
+webserver:
+  replicas: 1
+  service:
+    type: NodePort
+    ports:
+      - name: airflow-ui
+        port: 8080
+        nodePort: 30090
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    email: admin@example.com
+    password: admin
+  resources:
+    requests: { cpu: "200m", memory: "512Mi" }
+    limits: { memory: "1Gi" }
+
+config:
+  core:
+    load_examples: "False"
+    default_timezone: "UTC"
+  kubernetes_executor:
+    namespace: "url-fraud"
+
+extraEnv: |
+  - name: MLFLOW_TRACKING_URI
+    value: "http://mlflow.url-fraud.svc.cluster.local:5000"
+  - name: MLFLOW_EXPERIMENT
+    value: "fraud_url_detection"
+  - name: MLFLOW_MODEL_NAME
+    value: "url-fraud-detector"
+  - name: AIRFLOW__CORE__PARALLELISM
+    value: "8"
+
+podSecurityContext:
+  runAsNonRoot: true
+  fsGroup: 0

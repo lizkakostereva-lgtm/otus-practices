@@ -1,0 +1,125 @@
+# Single-node Kafka in KRaft mode (no ZooKeeper) for the attack simulation.
+#
+# Production would use Yandex Managed Service for Kafka (see terraform/) or a
+# 3-broker StatefulSet; one broker is enough to demonstrate the pipeline
+#   producer -> topic `urls` -> consumer -> model API -> HPA.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-data
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka
+        app.kubernetes.io/part-of: url-fraud
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kafka
+          image: apache/kafka:3.9.0
+          ports:
+            - name: broker
+              containerPort: 9092
+            - name: controller
+              containerPort: 9093
+          env:
+            - name: CLUSTER_ID
+              value: "MkU3OEVBNTcwNTJENDM2Qk"
+            - name: KAFKA_NODE_ID
+              value: "0"
+            - name: KAFKA_PROCESS_ROLES
+              value: "controller,broker"
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: "0@localhost:9093"
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://kafka:9092"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "PLAINTEXT"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+            - name: KAFKA_LOG_RETENTION_HOURS
+              value: "6"
+            - name: KAFKA_LOG_DIRS
+              value: "/var/lib/kafka/data"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+          resources:
+            requests: { cpu: "200m", memory: "512Mi" }
+            limits: { memory: "1Gi" }
+          readinessProbe:
+            # TCP only: a metadata-aware probe deadlocks because the broker
+            # advertises the Service DNS name, and the Service has no endpoints
+            # until the pod is Ready.
+            tcpSocket:
+              port: broker
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: kafka-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  selector:
+    app.kubernetes.io/name: kafka
+  ports:
+    - name: broker
+      port: 9092
+      targetPort: broker

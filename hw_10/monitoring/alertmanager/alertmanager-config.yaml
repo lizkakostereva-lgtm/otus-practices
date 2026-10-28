@@ -1,0 +1,56 @@
+# Alertmanager routing for the sysadmin.
+#
+# kube-prometheus-stack picks this object up because the Helm values set
+#   alertmanagerConfigSelector: {}
+#   alertmanagerConfigNamespaceSelector: {}
+# (i.e. AlertmanagerConfigs from all namespaces are honoured).
+#
+# The SMTP password is NOT in this file. Create the secret first:
+#   kubectl -n url-fraud create secret generic alertmanager-smtp \
+#     --from-literal=password='<smtp-password>'
+# (or apply monitoring/alertmanager/alertmanager-secret.example.yaml after
+#  filling it in — never commit the real value).
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: url-fraud-routing
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  route:
+    receiver: sysadmin
+    groupBy: ["alertname", "namespace", "pod"]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 3h
+    routes:
+      # Everything tagged for the SRE team goes straight to the on-call inbox.
+      - receiver: sysadmin
+        matchers:
+          - name: team
+            value: sre
+            matchType: "="
+        continue: false
+  receivers:
+    - name: sysadmin
+      emailConfigs:
+        - to: sysadmin@example.com
+          from: alertmanager@example.com
+          smarthost: smtp.example.com:587
+          authUsername: alertmanager@example.com
+          authPassword:
+            name: alertmanager-smtp
+            key: password
+          requireTLS: true
+          sendResolved: true
+          headers:
+            - key: Subject
+              value: "[{{ .Status | toUpper }}] url-fraud: {{ .CommonLabels.alertname }}"
+      # Alternative / additional transport (uncomment and set the URL in a
+      # secret to page a chat or a webhook endpoint):
+      # webhookConfigs:
+      #   - urlSecret:
+      #       name: alertmanager-webhook
+      #       key: url
+      #     sendResolved: true

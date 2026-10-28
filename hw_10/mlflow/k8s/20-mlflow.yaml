@@ -1,0 +1,162 @@
+# MLflow tracking server.
+#
+#   backend store : PostgreSQL  (mlflow-postgres, in-cluster)
+#   artifact store: Yandex Object Storage via --serve-artifacts
+#
+# With `--serve-artifacts` clients only ever talk to this server (port 5000);
+# MLflow proxies artifact upload/download to S3 using the AWS_* env below.
+# That keeps S3 credentials out of every training pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: mlflow
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mlflow
+        app.kubernetes.io/part-of: url-fraud
+      annotations:
+        prometheus.io/scrape: "false"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - until pg_isready -h mlflow-postgres -p 5432 -U mlflow; do echo waiting for postgres; sleep 2; done
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      containers:
+        - name: mlflow
+          image: cr.yandex/REGISTRY_ID/mlflow:1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["mlflow", "server"]
+          args:
+            - "--host=0.0.0.0"
+            - "--port=5000"
+            - "--backend-store-uri=$(BACKEND_STORE_URI)"
+            - "--artifacts-destination=$(ARTIFACT_DESTINATION)"
+            - "--serve-artifacts"
+            - "--default-artifact-root=mlflow-artifacts:/"
+            - "--gunicorn-opts=--timeout 180"
+          ports:
+            - name: http
+              containerPort: 5000
+          env:
+            - name: HOME
+              value: /tmp
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-secrets
+                  key: POSTGRES_PASSWORD
+            - name: BACKEND_STORE_URI
+              value: "postgresql://mlflow:$(POSTGRES_PASSWORD)@mlflow-postgres:5432/mlflow"
+            - name: ARTIFACT_DESTINATION
+              value: "s3://mlflow-artifacts-ek/"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-secrets
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-secrets
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_DEFAULT_REGION
+              value: "ru-central1"
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: "https://storage.yandexcloud.net"
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { memory: "1Gi" }
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: mlflow
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  selector:
+    app.kubernetes.io/name: mlflow
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+---
+# Optional NodePort for the MLflow UI from outside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow-ui
+  namespace: url-fraud
+  labels:
+    app.kubernetes.io/name: mlflow
+    app.kubernetes.io/part-of: url-fraud
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: mlflow
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+      nodePort: 30500
