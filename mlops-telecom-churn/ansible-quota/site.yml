@@ -16,6 +16,9 @@
         AWS_SECRET_ACCESS_KEY: "{{ s3_secret_key }}"
       changed_when: false
 
+- name: Build and push images (on the k3s VM, which has internet access)
+  ansible.builtin.import_playbook: images.yml
+
 - name: Services VM
   ansible.builtin.import_playbook: services.yml
 
@@ -24,39 +27,3 @@
 
 - name: Kubernetes (k3s)
   ansible.builtin.import_playbook: k3s.yml
-
-- name: Fetch the kubeconfig for the local workstation
-  hosts: k3s
-  become: true
-  gather_facts: false
-
-  tasks:
-    - name: Fetch /etc/rancher/k3s/k3s.yaml
-      ansible.builtin.fetch:
-        src: /etc/rancher/k3s/k3s.yaml
-        dest: /tmp/{{ kubectl_context }}.yaml
-        flat: true
-
-- name: Point the local kubeconfig at the public IP
-  hosts: localhost
-  connection: local
-  gather_facts: false
-
-  tasks:
-    - name: Replace 127.0.0.1 with the public IP
-      ansible.builtin.replace:
-        path: /tmp/{{ kubectl_context }}.yaml
-        regexp: "127\\.0\\.0\\.1"
-        replace: "{{ k3s_public_ip }}"
-
-    - name: Install the context into ~/.kube
-      ansible.builtin.copy:
-        src: /tmp/{{ kubectl_context }}.yaml
-        dest: "{{ lookup('env', 'HOME') }}/.kube/{{ kubectl_context }}.yaml"
-        mode: "0600"
-
-    - name: Rename the kubeconfig context
-      ansible.builtin.replace:
-        path: "{{ lookup('env', 'HOME') }}/.kube/{{ kubectl_context }}.yaml"
-        regexp: "default"
-        replace: "{{ kubectl_context }}"

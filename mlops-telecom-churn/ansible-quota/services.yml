@@ -107,16 +107,14 @@
         docker login cr.yandex -u json_key --password-stdin < /opt/mlops/sa-key.json
       changed_when: false
 
-    - name: Build the API image
+    - name: Pull the pre-built images
       ansible.builtin.command:
-        cmd: docker build -t {{ image }} -f docker/api/Dockerfile .
-        chdir: "{{ repo_root }}"
-      register: build_api
-      changed_when: "'Successfully tagged' in build_api.stdout or 'naming to' in build_api.stdout"
-
-    - name: Push the API image to cr.yandex
-      ansible.builtin.command:
-        cmd: docker push {{ image }}
+        cmd: docker pull {{ item }}
+      loop:
+        - "{{ image }}"
+        - "{{ postgres_image }}"
+        - "{{ mlflow_image }}"
+        - "{{ airflow_image }}"
       changed_when: false
 
     - name: Render .env for docker compose
@@ -140,7 +138,7 @@
       ansible.builtin.command:
         cmd: >-
           docker compose -f /opt/mlops/docker-compose.yml
-          --env-file /opt/mlops/.env up -d --build
+          --env-file /opt/mlops/.env up -d
       register: compose_up
       changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr"
 

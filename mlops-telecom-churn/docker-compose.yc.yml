@@ -7,11 +7,10 @@
 
 name: mlops-churn
 
+# Images are built on the k3s VM (which has full internet access) and pulled
+# from Yandex Container Registry, because Docker Hub is unreachable here.
 x-airflow-common: &airflow-common
-  build:
-    context: /opt/mlops/repo
-    dockerfile: docker/airflow/Dockerfile
-  image: mlops-airflow:2.9.3
+  image: ${AIRFLOW_IMAGE:-mlops-airflow:2.9.3}
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
@@ -36,7 +35,7 @@ x-airflow-common: &airflow-common
 
 services:
   postgres:
-    image: postgres:15
+    image: ${POSTGRES_IMAGE:-postgres:15}
     restart: unless-stopped
     environment:
       POSTGRES_USER: airflow
@@ -51,10 +50,7 @@ services:
       retries: 20
 
   mlflow:
-    build:
-      context: /opt/mlops/repo
-      dockerfile: docker/mlflow/Dockerfile
-    image: mlops-mlflow:2.16.2
+    image: ${MLFLOW_IMAGE:-mlops-mlflow:2.16.2}
     restart: unless-stopped
     depends_on:
       postgres:

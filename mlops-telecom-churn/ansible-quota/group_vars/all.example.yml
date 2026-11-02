@@ -12,6 +12,9 @@ airflow_public_uri: "http://REPLACE_K3S_IP:8080"
 mlflow_internal_uri: "http://REPLACE_SERVICES_PRIVATE_IP:5000"
 
 image: "cr.yandex/REPLACE_REGISTRY_ID/mlops-telecom-churn-api:latest"
+airflow_image: "cr.yandex/REPLACE_REGISTRY_ID/mlops-airflow:2.9.3"
+mlflow_image: "cr.yandex/REPLACE_REGISTRY_ID/mlops-mlflow:2.16.2"
+postgres_image: "cr.yandex/REPLACE_REGISTRY_ID/mlops-postgres:15"
 
 bucket_data: "REPLACE_ME"
 bucket_dags: "REPLACE_ME"

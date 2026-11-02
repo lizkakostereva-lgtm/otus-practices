@@ -264,3 +264,41 @@
           - "Grafana:      http://{{ k3s_public_ip }}:30300 (admin/admin)"
           - "Prometheus:   http://{{ k3s_public_ip }}:30900"
           - "Alertmanager: http://{{ k3s_public_ip }}:30903"
+
+    - name: Fetch the kubeconfig
+      ansible.builtin.fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: "/tmp/{{ kubectl_context }}.yaml"
+        flat: true
+
+    - name: Point the kubeconfig at the public IP
+      ansible.builtin.replace:
+        path: "/tmp/{{ kubectl_context }}.yaml"
+        regexp: "127\\.0\\.0\\.1"
+        replace: "{{ k3s_public_ip }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Make sure ~/.kube exists
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/.kube"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    - name: Install the kubeconfig
+      ansible.builtin.copy:
+        src: "/tmp/{{ kubectl_context }}.yaml"
+        dest: "{{ lookup('env', 'HOME') }}/.kube/{{ kubectl_context }}.yaml"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+
+    - name: Rename the kubeconfig context
+      ansible.builtin.replace:
+        path: "{{ lookup('env', 'HOME') }}/.kube/{{ kubectl_context }}.yaml"
+        regexp: "default"
+        replace: "{{ kubectl_context }}"
+      delegate_to: localhost
+      become: false
