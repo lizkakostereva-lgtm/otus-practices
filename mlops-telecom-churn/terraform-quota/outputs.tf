@@ -6,12 +6,18 @@ output "k3s_public_ip" {
   value = yandex_compute_instance.k3s.network_interface[0].nat_ip_address
 }
 
+output "services_private_ip" {
+  value = yandex_compute_instance.services.network_interface[0].ip_address
+}
+
+# MLflow and Airflow are published through the k3s VM (TCP proxy), because the
+# services VM public IP is not reachable from every client network.
 output "mlflow_tracking_uri" {
-  value = "http://${yandex_compute_instance.services.network_interface[0].nat_ip_address}:5000"
+  value = "http://${yandex_compute_instance.k3s.network_interface[0].nat_ip_address}:5000"
 }
 
 output "airflow_ui" {
-  value = "http://${yandex_compute_instance.services.network_interface[0].nat_ip_address}:8080"
+  value = "http://${yandex_compute_instance.k3s.network_interface[0].nat_ip_address}:8080"
 }
 
 output "api_nodeport" {

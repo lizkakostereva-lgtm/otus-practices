@@ -96,6 +96,22 @@ resource "yandex_vpc_security_group" "k3s" {
     to_port        = 32767
   }
 
+  # TCP proxy to the services VM (MLflow 5000, Airflow 8080). The services
+  # public IP is not reachable from every network, the k3s one is.
+  ingress {
+    description    = "MLflow UI (proxied)"
+    protocol       = "TCP"
+    v4_cidr_blocks = ["0.0.0.0/0"]
+    port           = 5000
+  }
+
+  ingress {
+    description    = "Airflow UI (proxied)"
+    protocol       = "TCP"
+    v4_cidr_blocks = ["0.0.0.0/0"]
+    port           = 8080
+  }
+
   ingress {
     description    = "Internal"
     protocol       = "ANY"

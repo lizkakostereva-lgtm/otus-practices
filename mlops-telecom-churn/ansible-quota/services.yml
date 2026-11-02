@@ -133,5 +133,5 @@
     - name: Show endpoints
       ansible.builtin.debug:
         msg:
-          - "MLflow:  http://{{ services_public_ip }}:5000"
-          - "Airflow: http://{{ services_public_ip }}:8080 (admin/admin)"
+          - "MLflow:  {{ mlflow_public_uri }}"
+          - "Airflow: {{ airflow_public_uri }} (admin/admin)"

@@ -19,10 +19,43 @@
 
     - name: Install base packages
       ansible.builtin.apt:
-        name: [curl, git, jq, ca-certificates]
+        name: [curl, git, jq, ca-certificates, socat]
         state: present
         update_cache: true
         cache_valid_time: 600
+
+    # The services VM public IP is not reachable from every client network, so
+    # MLflow (5000) and Airflow (8080) are published on this VM instead.
+    - name: Install TCP proxies for MLflow and Airflow
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/mlops-proxy-{{ item.name }}.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=TCP proxy :{{ item.port }} -> {{ services_private_ip }}:{{ item.port }} ({{ item.name }})
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          ExecStart=/usr/bin/socat TCP-LISTEN:{{ item.port }},fork,reuseaddr TCP:{{ services_private_ip }}:{{ item.port }}
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+      loop:
+        - { name: mlflow, port: 5000 }
+        - { name: airflow, port: 8080 }
+
+    - name: Enable the TCP proxies
+      ansible.builtin.systemd:
+        name: "mlops-proxy-{{ item.name }}"
+        enabled: true
+        state: restarted
+        daemon_reload: true
+      loop:
+        - { name: mlflow, port: 5000 }
+        - { name: airflow, port: 8080 }
 
     - name: Install k3s
       ansible.builtin.shell: |
@@ -104,7 +137,7 @@
           --from-literal=LOG_LEVEL=INFO \
           --from-literal=MODEL_NAME=telecom-churn-model \
           --from-literal=MODEL_STAGE=Production \
-          --from-literal=MLFLOW_TRACKING_URI='http://{{ services_public_ip }}:5000' \
+          --from-literal=MLFLOW_TRACKING_URI='{{ mlflow_internal_uri }}' \
           --from-literal=S3_ENDPOINT_URL=https://storage.yandexcloud.net \
           --from-literal=S3_DATA_BUCKET='{{ bucket_data }}' \
           --from-literal=S3_RAW_KEY='{{ s3_raw_key }}' \
@@ -185,6 +218,8 @@
       ansible.builtin.debug:
         msg:
           - "API:          http://{{ k3s_public_ip }}:30080/docs"
+          - "MLflow:       {{ mlflow_public_uri }}"
+          - "Airflow:      {{ airflow_public_uri }} (admin/admin)"
           - "Grafana:      http://{{ k3s_public_ip }}:30300 (admin/admin)"
           - "Prometheus:   http://{{ k3s_public_ip }}:30900"
           - "Alertmanager: http://{{ k3s_public_ip }}:30903"

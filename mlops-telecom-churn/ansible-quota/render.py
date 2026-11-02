@@ -2,6 +2,10 @@
 """Render inventory.ini and group_vars/all.yml from terraform-quota outputs.
 
 Usage: python3 ansible-quota/render.py [branch]
+
+The services VM is reached through the k3s VM (ProxyCommand) because its
+public IP is not routable from every client network. The same k3s VM also
+publishes MLflow/Airflow on ports 5000/8080 (socat, see k3s.yml).
 """
 import json
 import pathlib
@@ -13,6 +17,12 @@ import yaml
 HERE = pathlib.Path(__file__).resolve().parent
 TF_DIR = HERE.parent / "terraform-quota"
 BRANCH = sys.argv[1] if len(sys.argv) > 1 else "feature/mlops-diploma-deploy"
+SSH_KEY = pathlib.Path.home() / ".ssh" / "mlops_diploma"
+
+PROXY_COMMAND = (
+    f'ssh -i {SSH_KEY} -o StrictHostKeyChecking=no -o BatchMode=yes '
+    "-W %h:%p ubuntu@{k3s_ip}"
+)
 
 
 def tf_outputs():
@@ -25,13 +35,16 @@ def tf_outputs():
 def main():
     out = tf_outputs()
     services_ip = out["services_public_ip"]
+    services_private_ip = out["services_private_ip"]
     k3s_ip = out["k3s_public_ip"]
 
+    proxy = PROXY_COMMAND.format(k3s_ip=k3s_ip)
+
     inventory = f"""[services]
-services-vm ansible_host={services_ip} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/mlops_diploma
+services-vm ansible_host={services_ip} ansible_user=ubuntu ansible_ssh_private_key_file={SSH_KEY} ansible_ssh_common_args='-o ProxyCommand="{proxy}"'
 
 [k3s]
-k3s-vm ansible_host={k3s_ip} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/mlops_diploma
+k3s-vm ansible_host={k3s_ip} ansible_user=ubuntu ansible_ssh_private_key_file={SSH_KEY}
 """
     (HERE / "inventory.ini").write_text(inventory)
 
@@ -40,7 +53,11 @@ k3s-vm ansible_host={k3s_ip} ansible_user=ubuntu ansible_ssh_private_key_file=~/
         "repo_branch": BRANCH,
         "repo_root": "/opt/mlops/repo",
         "services_public_ip": services_ip,
+        "services_private_ip": services_private_ip,
         "k3s_public_ip": k3s_ip,
+        "mlflow_public_uri": f"http://{k3s_ip}:5000",
+        "airflow_public_uri": f"http://{k3s_ip}:8080",
+        "mlflow_internal_uri": f"http://{services_private_ip}:5000",
         "image": f"{out['registry_image']}:latest",
         "bucket_data": out["bucket_data"],
         "bucket_dags": out["bucket_dags"],
@@ -64,7 +81,9 @@ k3s-vm ansible_host={k3s_ip} ansible_user=ubuntu ansible_ssh_private_key_file=~/
         yaml.safe_dump(variables, sort_keys=False, allow_unicode=True)
     )
 
-    print(f"inventory.ini -> services {services_ip}, k3s {k3s_ip}")
+    print(f"inventory.ini -> services {services_ip} (via {k3s_ip}), k3s {k3s_ip}")
+    print(f"MLflow:  http://{k3s_ip}:5000")
+    print(f"Airflow: http://{k3s_ip}:8080")
     print(f"branch: {BRANCH}")
 
 
