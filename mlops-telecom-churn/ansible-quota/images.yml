@@ -84,7 +84,7 @@
 
     - name: Build the API image
       ansible.builtin.command:
-        cmd: docker build -t {{ image }} -f docker/api/Dockerfile .
+        cmd: docker build --provenance=false --sbom=false -t {{ image }} -f docker/api/Dockerfile .
         chdir: /opt/mlops/build
       register: build_api
       changed_when: "'naming to' in build_api.stdout or 'exporting' in build_api.stdout"
@@ -96,7 +96,7 @@
 
     - name: Build the Airflow image
       ansible.builtin.command:
-        cmd: docker build -t {{ airflow_image }} -f docker/airflow/Dockerfile .
+        cmd: docker build --provenance=false --sbom=false -t {{ airflow_image }} -f docker/airflow/Dockerfile .
         chdir: /opt/mlops/build
 
     - name: Push the Airflow image
@@ -106,7 +106,7 @@
 
     - name: Build the MLflow image
       ansible.builtin.command:
-        cmd: docker build -t {{ mlflow_image }} -f docker/mlflow/Dockerfile .
+        cmd: docker build --provenance=false --sbom=false -t {{ mlflow_image }} -f docker/mlflow/Dockerfile .
         chdir: /opt/mlops/build
 
     - name: Push the MLflow image
@@ -119,6 +119,13 @@
         docker pull postgres:15
         docker tag postgres:15 {{ postgres_image }}
         docker push {{ postgres_image }}
+      changed_when: false
+
+    # The VM has a 20 GB disk: free the build cache and base layers after the
+    # images are safely in the registry.
+    - name: Free the build cache
+      ansible.builtin.command:
+        cmd: docker builder prune -af
       changed_when: false
 
     - name: Show pushed images
