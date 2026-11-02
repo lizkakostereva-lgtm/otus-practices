@@ -88,17 +88,45 @@
       args:
         creates: /usr/local/bin/helm
 
-    - name: Clone / update the project
-      ansible.builtin.git:
-        repo: "{{ repo_url }}"
+    - name: Create /opt/mlops
+      ansible.builtin.file:
+        path: "/opt/mlops"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Package the project
+      ansible.builtin.command:
+        cmd: >-
+          tar czf /tmp/mlops-repo.tar.gz
+          --exclude=.git --exclude=.venv --exclude=__pycache__
+          --exclude=models --exclude=data/raw --exclude=data/processed
+          --exclude=.terraform --exclude=.terraform.lock.hcl
+          --exclude=.infra-backup --exclude=mlruns --exclude=mlartifacts
+          --exclude=terraform/terraform.tfvars
+          --exclude=terraform-quota/terraform.tfvars
+          --exclude=inventory.ini --exclude=group_vars/all.yml
+          .
+        chdir: "{{ playbook_dir }}/.."
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Create the project directory
+      ansible.builtin.file:
+        path: "{{ repo_root }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Upload the project
+      ansible.builtin.unarchive:
+        src: /tmp/mlops-repo.tar.gz
         dest: "{{ repo_root }}"
-        version: "{{ repo_branch }}"
-        force: true
-        update: true
-      become: true
-      become_user: ubuntu
-      environment:
-        HOME: /home/ubuntu
+        owner: ubuntu
+        group: ubuntu
 
     - name: Create the namespace
       ansible.builtin.command:

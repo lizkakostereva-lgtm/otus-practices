@@ -16,7 +16,6 @@ import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
 TF_DIR = HERE.parent / "terraform-quota"
-BRANCH = sys.argv[1] if len(sys.argv) > 1 else "feature/mlops-diploma-deploy"
 SSH_KEY = pathlib.Path.home() / ".ssh" / "mlops_diploma"
 
 PROXY_COMMAND = (
@@ -49,8 +48,6 @@ k3s-vm ansible_host={k3s_ip} ansible_user=ubuntu ansible_ssh_private_key_file={S
     (HERE / "inventory.ini").write_text(inventory)
 
     variables = {
-        "repo_url": "https://github.com/lizkakostereva-lgtm/otus-practices.git",
-        "repo_branch": BRANCH,
         "repo_root": "/opt/mlops/repo",
         "services_public_ip": services_ip,
         "services_private_ip": services_private_ip,
@@ -84,7 +81,6 @@ k3s-vm ansible_host={k3s_ip} ansible_user=ubuntu ansible_ssh_private_key_file={S
     print(f"inventory.ini -> services {services_ip} (via {k3s_ip}), k3s {k3s_ip}")
     print(f"MLflow:  http://{k3s_ip}:5000")
     print(f"Airflow: http://{k3s_ip}:8080")
-    print(f"branch: {BRANCH}")
 
 
 if __name__ == "__main__":

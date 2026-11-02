@@ -1,5 +1,29 @@
 ---
 # PostgreSQL + MLflow + Airflow on the services VM.
+#
+# GitHub is not reachable from this VM, so the project is uploaded from the
+# control machine as a tarball instead of `git clone`.
+- name: Package the project
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Create the project archive
+      ansible.builtin.command:
+        cmd: >-
+          tar czf /tmp/mlops-repo.tar.gz
+          --exclude=.git --exclude=.venv --exclude=__pycache__
+          --exclude=models --exclude=data/raw --exclude=data/processed
+          --exclude=.terraform --exclude=.terraform.lock.hcl
+          --exclude=.infra-backup --exclude=mlruns --exclude=mlartifacts
+          --exclude=terraform/terraform.tfvars
+          --exclude=terraform-quota/terraform.tfvars
+          --exclude=inventory.ini --exclude=group_vars/all.yml
+          .
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: false
+
 - name: Prepare the services VM (docker compose stack)
   hosts: services
   become: true
@@ -55,17 +79,20 @@
         group: ubuntu
         mode: "0755"
 
-    - name: Clone / update the project
-      ansible.builtin.git:
-        repo: "{{ repo_url }}"
+    - name: Create the project directory
+      ansible.builtin.file:
+        path: "{{ repo_root }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Upload the project
+      ansible.builtin.unarchive:
+        src: /tmp/mlops-repo.tar.gz
         dest: "{{ repo_root }}"
-        version: "{{ repo_branch }}"
-        force: true
-        update: true
-      become: true
-      become_user: ubuntu
-      environment:
-        HOME: /home/ubuntu
+        owner: ubuntu
+        group: ubuntu
 
     - name: Service account key for cr.yandex
       ansible.builtin.copy:

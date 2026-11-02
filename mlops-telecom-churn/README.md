@@ -123,11 +123,15 @@ curl -s http://51.250.9.220:30080/predict -H 'Content-Type: application/json' -d
 ```bash
 cd mlops-telecom-churn
 terraform -chdir=terraform-quota init && terraform -chdir=terraform-quota apply
-python3 ansible-quota/render.py feature/mlops-diploma-deploy   # inventory + group_vars из outputs
+python3 ansible-quota/render.py            # inventory + group_vars из terraform outputs
 cd ansible-quota && ansible-playbook site.yml
 ```
 
 `site.yml` делает всё сам: загружает датасет в Object Storage, ставит Docker, собирает и пушит образ API в `cr.yandex`, поднимает Postgres+MLflow+Airflow, прогоняет пайплайн (preprocess -> train -> evaluate -> promote), ставит k3s, применяет манифесты, ставит kube-prometheus-stack и забирает kubeconfig в `~/.kube/mlops-k3s.yaml`.
+
+Код на VM копируется по SSH из рабочей копии на ноутбуке (tar + `unarchive`), потому что с сервисной VM не открывается `github.com`. CI при этом работает через GitHub Actions и GHCR, как обычно.
+
+> Быстрый локальный аналог без облака: `make up-local && make local-pipeline && make api`.
 
 **Ручные шаги (только они):**
 1. `terraform-quota/terraform.tfvars` — токен, folder_id, SSH-ключ (файл в `.gitignore`).
