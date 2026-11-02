@@ -1,0 +1,36 @@
+stages:
+  preprocess:
+    cmd: python -m src.data.preprocess
+    deps:
+      - src/data/preprocess.py
+      - src/data/load.py
+      - data/raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
+    outs:
+      - data/processed/cleaned.csv
+    params:
+      - data
+
+  train:
+    cmd: python -m src.train.train
+    deps:
+      - src/train/train.py
+      - src/features/build_features.py
+      - data/processed/cleaned.csv
+    outs:
+      - models/pipeline.joblib
+      - models/model.joblib
+      - models/preprocessor.joblib
+    params:
+      - features
+      - train
+      - mlflow
+
+  evaluate:
+    cmd: python -m src.evaluate.evaluate
+    deps:
+      - src/evaluate/evaluate.py
+      - models/pipeline.joblib
+      - data/processed/cleaned.csv
+    params:
+      - data
+      - features

@@ -1,0 +1,16 @@
+.git
+.idea
+.infrastructure
+.infra-backup
+**/__pycache__
+**/*.pyc
+data/raw
+data/processed
+models
+mlruns
+mlartifacts
+terraform
+terraform-quota
+ansible
+ansible-quota
+tests

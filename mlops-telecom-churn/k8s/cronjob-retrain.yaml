@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: churn-retrain
+  namespace: mlops-churn
+spec:
+  schedule: "0 3 * * 0"  # Weekly Sunday 03:00
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          imagePullSecrets:
+            - name: yc-cr
+          containers:
+            - name: retrain
+              image: cr.yandex/REPLACE_REGISTRY_ID/mlops-telecom-churn-api:latest
+              imagePullPolicy: Always
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -e
+                  python -m src.data.preprocess
+                  python -m src.train.train
+                  python -m src.evaluate.evaluate
+                  python scripts/promote_model.py
+              # MLFLOW_TRACKING_URI comes from churn-api-config, which
+              # ansible-quota renders with the real MLflow endpoint.
+              envFrom:
+                - configMapRef:
+                    name: churn-api-config
+                - secretRef:
+                    name: churn-secrets

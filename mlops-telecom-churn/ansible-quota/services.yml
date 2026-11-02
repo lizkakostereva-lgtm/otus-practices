@@ -1,0 +1,137 @@
+---
+# PostgreSQL + MLflow + Airflow on the services VM.
+- name: Prepare the services VM (docker compose stack)
+  hosts: services
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for cloud-init / apt lock
+      ansible.builtin.shell: |
+        cloud-init status --wait >/dev/null 2>&1 || true
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - git
+          - curl
+          - jq
+          - unzip
+          - ca-certificates
+          - python3-pip
+        state: present
+        update_cache: true
+        cache_valid_time: 600
+
+    - name: Install Docker (official convenience script)
+      ansible.builtin.shell: curl -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+
+    - name: Add ubuntu to the docker group
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+    - name: Create /opt/mlops
+      ansible.builtin.file:
+        path: /opt/mlops
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Clone / update the project
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_root }}"
+        version: "{{ repo_branch }}"
+        force: true
+        update: true
+      become: true
+      become_user: ubuntu
+      environment:
+        HOME: /home/ubuntu
+
+    - name: Service account key for cr.yandex
+      ansible.builtin.copy:
+        content: "{{ sa_key_json }}"
+        dest: /opt/mlops/sa-key.json
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Log in to cr.yandex
+      ansible.builtin.shell: |
+        docker login cr.yandex -u json_key --password-stdin < /opt/mlops/sa-key.json
+      changed_when: false
+
+    - name: Build the API image
+      ansible.builtin.command:
+        cmd: docker build -t {{ image }} -f docker/api/Dockerfile .
+        chdir: "{{ repo_root }}"
+      register: build_api
+      changed_when: "'Successfully tagged' in build_api.stdout or 'naming to' in build_api.stdout"
+
+    - name: Push the API image to cr.yandex
+      ansible.builtin.command:
+        cmd: docker push {{ image }}
+      changed_when: false
+
+    - name: Render .env for docker compose
+      ansible.builtin.template:
+        src: templates/env.j2
+        dest: /opt/mlops/.env
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Install the compose file
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/docker-compose.yc.yml"
+        dest: /opt/mlops/docker-compose.yml
+        remote_src: true
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    - name: Start PostgreSQL, MLflow and Airflow
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f /opt/mlops/docker-compose.yml
+          --env-file /opt/mlops/.env up -d --build
+      register: compose_up
+      changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr"
+
+    - name: Wait for MLflow
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5000/health
+        status_code: 200
+        timeout: 5
+      register: mlflow_health
+      retries: 60
+      delay: 5
+      until: mlflow_health.status == 200
+
+    - name: Wait for Airflow
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/health
+        status_code: 200
+        timeout: 5
+      register: airflow_health
+      retries: 90
+      delay: 5
+      until: airflow_health.status == 200
+
+    - name: Show endpoints
+      ansible.builtin.debug:
+        msg:
+          - "MLflow:  http://{{ services_public_ip }}:5000"
+          - "Airflow: http://{{ services_public_ip }}:8080 (admin/admin)"

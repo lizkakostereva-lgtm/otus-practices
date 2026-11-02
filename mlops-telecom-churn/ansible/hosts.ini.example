@@ -1,0 +1,5 @@
+[postgres]
+postgres-vm ansible_host=<POSTGRES_VM_IP> ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+[mlflow]
+mlflow-vm ansible_host=<MLFLOW_VM_IP> ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa

@@ -1,0 +1,190 @@
+---
+# Single-node Kubernetes (k3s) with the churn API, HPA, CronJob retraining and
+# kube-prometheus-stack (Prometheus, Grafana, Alertmanager) exposed via NodePort.
+- name: Prepare the k3s VM
+  hosts: k3s
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for cloud-init / apt lock
+      ansible.builtin.shell: |
+        cloud-init status --wait >/dev/null 2>&1 || true
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name: [curl, git, jq, ca-certificates]
+        state: present
+        update_cache: true
+        cache_valid_time: 600
+
+    - name: Install k3s
+      ansible.builtin.shell: |
+        curl -sfL https://get.k3s.io | \
+          INSTALL_K3S_VERSION=v1.29.10+k3s1 \
+          INSTALL_K3S_EXEC="server --tls-san {{ k3s_public_ip }} --write-kubeconfig-mode 644 --disable traefik --disable servicelb" \
+          sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for the node to become Ready
+      ansible.builtin.shell: |
+        export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+        kubectl get nodes | grep -q ' Ready '
+      register: node_ready
+      retries: 60
+      delay: 5
+      until: node_ready.rc == 0
+      changed_when: false
+
+    - name: Install Helm
+      ansible.builtin.shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Clone / update the project
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_root }}"
+        version: "{{ repo_branch }}"
+        force: true
+        update: true
+      become: true
+      become_user: ubuntu
+      environment:
+        HOME: /home/ubuntu
+
+    - name: Create the namespace
+      ansible.builtin.command:
+        cmd: kubectl apply -f k8s/namespace.yaml
+        chdir: "{{ repo_root }}"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Create the S3 credentials secret
+      ansible.builtin.shell: |
+        kubectl -n mlops-churn create secret generic churn-secrets \
+          --from-literal=AWS_ACCESS_KEY_ID='{{ s3_access_key }}' \
+          --from-literal=AWS_SECRET_ACCESS_KEY='{{ s3_secret_key }}' \
+          --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+
+    - name: Store the registry key on the node
+      ansible.builtin.copy:
+        content: "{{ sa_key_json }}"
+        dest: /root/sa-key.json
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Create the cr.yandex imagePullSecret
+      ansible.builtin.shell: |
+        kubectl -n mlops-churn create secret docker-registry yc-cr \
+          --docker-server=cr.yandex \
+          --docker-username=json_key \
+          --docker-password="$(cat /root/sa-key.json)" \
+          --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+
+    - name: Render the runtime ConfigMap (MLflow public IP, S3 bucket)
+      ansible.builtin.shell: |
+        kubectl -n mlops-churn create configmap churn-api-config \
+          --from-literal=API_HOST=0.0.0.0 \
+          --from-literal=API_PORT=8000 \
+          --from-literal=LOG_LEVEL=INFO \
+          --from-literal=MODEL_NAME=telecom-churn-model \
+          --from-literal=MODEL_STAGE=Production \
+          --from-literal=MLFLOW_TRACKING_URI='http://{{ services_public_ip }}:5000' \
+          --from-literal=S3_ENDPOINT_URL=https://storage.yandexcloud.net \
+          --from-literal=S3_DATA_BUCKET='{{ bucket_data }}' \
+          --from-literal=S3_RAW_KEY='{{ s3_raw_key }}' \
+          --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+
+    - name: Render manifests with the real registry id
+      ansible.builtin.shell: |
+        mkdir -p /tmp/k8s-rendered
+        for f in deployment.yaml cronjob-retrain.yaml; do
+          sed 's|REPLACE_REGISTRY_ID|{{ registry_id }}|g' "k8s/$f" > "/tmp/k8s-rendered/$f"
+        done
+      args:
+        chdir: "{{ repo_root }}"
+      changed_when: false
+
+    - name: Deploy the API, Service, HPA, CronJob and ServiceMonitor
+      ansible.builtin.command:
+        cmd: >-
+          kubectl apply
+          -f k8s/service.yaml
+          -f k8s/hpa.yaml
+          -f k8s/servicemonitor.yaml
+          -f /tmp/k8s-rendered/deployment.yaml
+          -f /tmp/k8s-rendered/cronjob-retrain.yaml
+        chdir: "{{ repo_root }}"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Wait for the API rollout
+      ansible.builtin.command:
+        cmd: kubectl -n mlops-churn rollout status deployment/churn-api --timeout=300s
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+
+    - name: Add the Prometheus community chart repository
+      ansible.builtin.command:
+        cmd: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      register: helm_repo
+      changed_when: "'has been added' in helm_repo.stdout"
+      failed_when: "helm_repo.rc != 0 and 'already exists' not in helm_repo.stderr"
+
+    - name: Update Helm repositories
+      ansible.builtin.command:
+        cmd: helm repo update
+
+    - name: Apply the monitoring namespace
+      ansible.builtin.shell: |
+        kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+
+    - name: Install kube-prometheus-stack
+      ansible.builtin.command:
+        cmd: >-
+          helm upgrade --install kube-prometheus-stack
+          prometheus-community/kube-prometheus-stack
+          -n monitoring
+          -f monitoring/kube-prometheus-stack-values.yaml
+          --version {{ monitoring_chart_version }}
+          --wait --timeout 15m
+        chdir: "{{ repo_root }}"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Apply the churn API PrometheusRule
+      ansible.builtin.command:
+        cmd: kubectl apply -f k8s/monitoring/prometheusrule-churn.yaml
+        chdir: "{{ repo_root }}"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Show access URLs
+      ansible.builtin.debug:
+        msg:
+          - "API:          http://{{ k3s_public_ip }}:30080/docs"
+          - "Grafana:      http://{{ k3s_public_ip }}:30300 (admin/admin)"
+          - "Prometheus:   http://{{ k3s_public_ip }}:30900"
+          - "Alertmanager: http://{{ k3s_public_ip }}:30903"

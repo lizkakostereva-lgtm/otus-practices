@@ -1,0 +1,12 @@
+pg_user: mlflow
+pg_password: mlflowpass
+pg_db: mlflow
+pg_host: <POSTGRES_VM_IP>
+
+mlflow_host: 0.0.0.0
+mlflow_port: 5000
+mlflow_artifact_root: s3://<MLFLOW_BUCKET>/artifacts
+
+aws_access_key_id: <MLFLOW_SA_ACCESS_KEY>
+aws_secret_access_key: <MLFLOW_SA_SECRET_KEY>
+s3_endpoint_url: https://storage.yandexcloud.net

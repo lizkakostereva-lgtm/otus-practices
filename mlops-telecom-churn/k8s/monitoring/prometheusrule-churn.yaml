@@ -1,0 +1,27 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: churn-api-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: churn-api-alerts
+      rules:
+        - alert: HighErrorRate
+          expr: sum(rate(http_requests_total{namespace="mlops-churn",status=~"5.."}[5m])) / sum(rate(http_requests_total{namespace="mlops-churn"}[5m])) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: High 5xx error rate on churn-api
+            description: "Error rate > 5% for last 5 minutes"
+        - alert: HighLatencyP95
+          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace="mlops-churn"}[5m])) by (le)) > 1
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: High p95 latency on churn-api
+            description: "p95 latency > 1s"

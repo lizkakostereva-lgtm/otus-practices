@@ -1,0 +1,67 @@
+---
+- name: Upload the raw dataset to Object Storage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Upload data/raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import boto3, os
+        boto3.client("s3", endpoint_url="https://storage.yandexcloud.net").upload_file(
+            os.path.join("{{ playbook_dir }}", "..", "data", "raw", "WA_Fn-UseC_-Telco-Customer-Churn.csv"),
+            "{{ bucket_data }}",
+            "{{ s3_raw_key }}",
+        )
+        print("uploaded")
+        PY
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ s3_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ s3_secret_key }}"
+      changed_when: false
+
+- name: Services VM
+  ansible.builtin.import_playbook: services.yml
+
+- name: Pipeline run
+  ansible.builtin.import_playbook: pipeline.yml
+
+- name: Kubernetes (k3s)
+  ansible.builtin.import_playbook: k3s.yml
+
+- name: Fetch the kubeconfig for the local workstation
+  hosts: k3s
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Fetch /etc/rancher/k3s/k3s.yaml
+      ansible.builtin.fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: /tmp/{{ kubectl_context }}.yaml
+        flat: true
+
+- name: Point the local kubeconfig at the public IP
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Replace 127.0.0.1 with the public IP
+      ansible.builtin.replace:
+        path: /tmp/{{ kubectl_context }}.yaml
+        regexp: "127\\.0\\.0\\.1"
+        replace: "{{ k3s_public_ip }}"
+
+    - name: Install the context into ~/.kube
+      ansible.builtin.copy:
+        src: /tmp/{{ kubectl_context }}.yaml
+        dest: "{{ lookup('env', 'HOME') }}/.kube/{{ kubectl_context }}.yaml"
+        mode: "0600"
+
+    - name: Rename the kubeconfig context
+      ansible.builtin.replace:
+        path: "{{ lookup('env', 'HOME') }}/.kube/{{ kubectl_context }}.yaml"
+        regexp: "default"
+        replace: "{{ kubectl_context }}"

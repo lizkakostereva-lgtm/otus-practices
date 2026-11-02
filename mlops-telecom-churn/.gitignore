@@ -1,0 +1,69 @@
+# Data
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+*.csv
+*.parquet
+
+# DVC
+/dvc.lock
+.dvc/cache
+.dvc/tmp
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Env
+.env
+*.env
+!.env.example
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Models/artifacts
+models/*.joblib
+models/*.pkl
+artifacts/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# K8s secrets
+k8s/*secret.yaml
+!k8s/secret-example.yaml
+
+# Terraform/Ansible sensitive
+terraform/terraform.tfvars
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/tfplan*
+ansible/hosts.ini
+ansible/vars.yml
+
+# Quota stand (terraform-quota + ansible-quota)
+terraform-quota/terraform.tfvars
+terraform-quota/*.tfstate
+terraform-quota/*.tfstate.*
+terraform-quota/.terraform/
+terraform-quota/.terraform.lock.hcl
+terraform-quota/tfplan*
+ansible-quota/inventory.ini
+ansible-quota/group_vars/all.yml
+ansible-quota/*.retry
+
+# Local backup of the previous infrastructure state (contains secrets)
+.infra-backup/

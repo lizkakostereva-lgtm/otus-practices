@@ -1,0 +1,30 @@
+# kube-prometheus-stack values for the diploma stand.
+# All UIs are exposed as NodePorts so they can be opened from a laptop without
+# kubectl port-forward (the k3s security group allows 30000-32767).
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30900
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    retention: 7d
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+grafana:
+  adminPassword: admin
+  defaultDashboardsEnabled: true
+  service:
+    type: NodePort
+    nodePort: 30300
+alertmanager:
+  enabled: true
+  service:
+    type: NodePort
+    nodePort: 30903

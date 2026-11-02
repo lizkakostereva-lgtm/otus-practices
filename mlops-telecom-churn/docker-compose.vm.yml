@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - /opt/mlops/postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://airflow:airflow@postgres:5432/airflow
+      --default-artifact-root file:/mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    volumes:
+      - /opt/mlops/mlflow:/mlflow
+    ports:
+      - "5000:5000"
+    depends_on:
+      - postgres
+
+  airflow-init:
+    image: apache/airflow:2.9.3
+    depends_on:
+      - postgres
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__FERNET_KEY: 'ZmD4qEl8snGB6voT5khk8X9vWjPXJzRrFvK5sNwLhUQ='
+    command: >
+      bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@example.com || true"
+
+  airflow-webserver:
+    image: apache/airflow:2.9.3
+    depends_on:
+      - postgres
+      - airflow-init
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__FERNET_KEY: 'ZmD4qEl8snGB6voT5khk8X9vWjPXJzRrFvK5sNwLhUQ='
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    volumes:
+      - /opt/mlops/dags:/opt/airflow/dags
+      - /opt/mlops/models:/opt/airflow/models
+      - /opt/mlops/data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    command: airflow webserver
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.3
+    depends_on:
+      - postgres
+      - airflow-init
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__FERNET_KEY: 'ZmD4qEl8snGB6voT5khk8X9vWjPXJzRrFvK5sNwLhUQ='
+    volumes:
+      - /opt/mlops/dags:/opt/airflow/dags
+      - /opt/mlops/models:/opt/airflow/models
+      - /opt/mlops/data:/opt/airflow/data
+    command: airflow scheduler
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - /opt/mlops/prometheus:/etc/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - /opt/mlops/grafana:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+
+  api:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - /Users/elizabeth/otus-practices/mlops-telecom-churn:/app
+      - /opt/mlops/models:/app/models
+    command: >
+      bash -c "pip install -q -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mlflow

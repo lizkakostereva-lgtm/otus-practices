@@ -1,0 +1,114 @@
+# Cloud runtime for the quota-constrained stand:
+#   postgres + MLflow + Airflow on one VM (docker compose),
+#   Kubernetes (k3s) + API + monitoring on the second VM.
+#
+# Rendered by ansible-quota/services.yml into /opt/mlops/docker-compose.yml.
+# Values come from /opt/mlops/.env (see ansible-quota/templates/env.j2).
+
+name: mlops-churn
+
+x-airflow-common: &airflow-common
+  build:
+    context: /opt/mlops/repo
+    dockerfile: docker/airflow/Dockerfile
+  image: mlops-airflow:2.9.3
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__FERNET_KEY: "ZmD4qEl8snGB6voT5khk8X9vWjPXJzRrFvK5sNwLhUQ="
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "30"
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    S3_ENDPOINT_URL: https://storage.yandexcloud.net
+    S3_DATA_BUCKET: ${S3_DATA_BUCKET}
+    S3_RAW_KEY: ${S3_RAW_KEY}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    PYTHONPATH: /opt/airflow/dags/repo
+  volumes:
+    - /opt/mlops/repo/airflow/dags:/opt/airflow/dags
+    - /opt/mlops/repo:/opt/airflow/dags/repo
+    - airflow-logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: airflow
+    volumes:
+      - /opt/mlops/postgres:/var/lib/postgresql/data
+      - /opt/mlops/repo/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      retries: 20
+
+  mlflow:
+    build:
+      context: /opt/mlops/repo
+      dockerfile: docker/mlflow/Dockerfile
+    image: mlops-mlflow:2.16.2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      MLFLOW_S3_ENDPOINT_URL: https://storage.yandexcloud.net
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://mlflow:${MLFLOW_DB_PASSWORD}@postgres:5432/mlflow
+      --default-artifact-root s3://${S3_MLFLOW_BUCKET}/artifacts
+      --serve-artifacts
+      --host 0.0.0.0
+      --port 5000
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/health')\""]
+      interval: 10s
+      retries: 30
+
+  airflow-init:
+    <<: *airflow-common
+    restart: "no"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username "${AIRFLOW_ADMIN_USER:-admin}" \
+          --password "${AIRFLOW_ADMIN_PASSWORD:-admin}" \
+          --firstname Admin --lastname Admin \
+          --role Admin --email admin@example.com || true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-webserver:
+    <<: *airflow-common
+    restart: unless-stopped
+    command: airflow webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      retries: 30
+
+  airflow-scheduler:
+    <<: *airflow-common
+    restart: unless-stopped
+    command: airflow scheduler
+
+volumes:
+  airflow-logs:

@@ -1,0 +1,28 @@
+---
+# One full pipeline run: preprocess -> train -> evaluate -> promote.
+# Data is pulled from Object Storage by src/data/load.py; metrics/artifacts go
+# to MLflow (PostgreSQL + S3), the best model is promoted to Production.
+- name: Run the MLOps pipeline
+  hosts: services
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Run preprocess, train, evaluate and promote
+      ansible.builtin.shell: |
+        set -e
+        docker run --rm --network mlops-churn_default \
+          --env-file /opt/mlops/.env \
+          -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
+          -v {{ repo_root }}:/app -w /app \
+          {{ image }} \
+          sh -c 'python -m src.data.preprocess && \
+                 python -m src.train.train && \
+                 python -m src.evaluate.evaluate && \
+                 python scripts/promote_model.py'
+      register: pipeline
+      changed_when: "'ROC-AUC' in pipeline.stdout"
+
+    - name: Pipeline output
+      ansible.builtin.debug:
+        var: pipeline.stdout_lines
