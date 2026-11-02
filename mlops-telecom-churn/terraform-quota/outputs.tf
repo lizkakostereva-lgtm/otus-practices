@@ -65,6 +65,7 @@ output "sa_key_json" {
     service_account_id = yandex_iam_service_account_key.ci.service_account_id
     created_at         = yandex_iam_service_account_key.ci.created_at
     key_algorithm      = "RSA_2048"
+    public_key         = yandex_iam_service_account_key.ci.public_key
     private_key        = yandex_iam_service_account_key.ci.private_key
   })
   sensitive = true
