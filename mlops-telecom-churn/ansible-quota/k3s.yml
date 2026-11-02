@@ -156,13 +156,12 @@
         chdir: "{{ repo_root }}"
       changed_when: false
 
-    - name: Deploy the API, Service, HPA, CronJob and ServiceMonitor
+    - name: Deploy the API, Service, HPA and CronJob
       ansible.builtin.command:
         cmd: >-
           kubectl apply
           -f k8s/service.yaml
           -f k8s/hpa.yaml
-          -f k8s/servicemonitor.yaml
           -f /tmp/k8s-rendered/deployment.yaml
           -f /tmp/k8s-rendered/cronjob-retrain.yaml
         chdir: "{{ repo_root }}"
@@ -203,6 +202,13 @@
           -f monitoring/kube-prometheus-stack-values.yaml
           --version {{ monitoring_chart_version }}
           --wait --timeout 15m
+        chdir: "{{ repo_root }}"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Apply the churn API ServiceMonitor
+      ansible.builtin.command:
+        cmd: kubectl apply -f k8s/servicemonitor.yaml
         chdir: "{{ repo_root }}"
       environment:
         KUBECONFIG: /etc/rancher/k3s/k3s.yaml

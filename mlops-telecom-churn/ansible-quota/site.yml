@@ -6,16 +6,11 @@
 
   tasks:
     - name: Upload data/raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
-      ansible.builtin.shell: |
-        python3 - <<'PY'
-        import boto3, os
-        boto3.client("s3", endpoint_url="https://storage.yandexcloud.net").upload_file(
-            os.path.join("{{ playbook_dir }}", "..", "data", "raw", "WA_Fn-UseC_-Telco-Customer-Churn.csv"),
-            "{{ bucket_data }}",
-            "{{ s3_raw_key }}",
-        )
-        print("uploaded")
-        PY
+      ansible.builtin.command:
+        cmd: >-
+          aws --endpoint-url https://storage.yandexcloud.net s3 cp
+          {{ playbook_dir }}/../data/raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
+          s3://{{ bucket_data }}/{{ s3_raw_key }}
       environment:
         AWS_ACCESS_KEY_ID: "{{ s3_access_key }}"
         AWS_SECRET_ACCESS_KEY: "{{ s3_secret_key }}"
