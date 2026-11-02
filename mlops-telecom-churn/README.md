@@ -105,6 +105,19 @@
 | Prometheus | http://51.250.9.220:30900 | — |
 | Alertmanager | http://51.250.9.220:30903 | — |
 
+```bash
+# Проверка API
+curl -s http://51.250.9.220:30080/health
+curl -s http://51.250.9.220:30080/predict -H 'Content-Type: application/json' -d '{
+  "gender": "Female", "SeniorCitizen": 0, "Partner": "Yes", "Dependents": "No",
+  "tenure": 1, "PhoneService": "No", "MultipleLines": "No phone service",
+  "InternetService": "DSL", "OnlineSecurity": "No", "OnlineBackup": "Yes",
+  "DeviceProtection": "No", "TechSupport": "No", "StreamingTV": "No",
+  "StreamingMovies": "No", "Contract": "Month-to-month", "PaperlessBilling": "Yes",
+  "PaymentMethod": "Electronic check", "MonthlyCharges": 29.85, "TotalCharges": 29.85
+}'
+```
+
 **Развёртывание с нуля:**
 
 ```bash

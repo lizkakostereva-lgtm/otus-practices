@@ -1,5 +1,10 @@
 FROM apache/airflow:2.9.3-python3.11
 
+# Prefer IPv4: the cloud VMs have no IPv6 route and some CDNs publish AAAA.
+USER root
+RUN echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf
+USER airflow
+
 # The image is built on the VM (ansible-quota/services.yml). Airflow keeps its
 # own pinned dependencies, so the ML libraries are installed against the
 # official constraints file.

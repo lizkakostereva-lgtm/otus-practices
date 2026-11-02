@@ -29,8 +29,15 @@
         update_cache: true
         cache_valid_time: 600
 
+    - name: Prefer IPv4 for name resolution
+      ansible.builtin.lineinfile:
+        path: /etc/gai.conf
+        line: "precedence ::ffff:0:0/96  100"
+        regexp: '^precedence ::ffff:0:0/96'
+        state: present
+
     - name: Install Docker (official convenience script)
-      ansible.builtin.shell: curl -fsSL https://get.docker.com | sh
+      ansible.builtin.shell: curl -4 -fsSL https://get.docker.com | sh
       args:
         creates: /usr/bin/docker
 

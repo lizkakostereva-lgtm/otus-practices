@@ -57,9 +57,16 @@
         - { name: mlflow, port: 5000 }
         - { name: airflow, port: 8080 }
 
+    - name: Prefer IPv4 for name resolution
+      ansible.builtin.lineinfile:
+        path: /etc/gai.conf
+        line: "precedence ::ffff:0:0/96  100"
+        regexp: '^precedence ::ffff:0:0/96'
+        state: present
+
     - name: Install k3s
       ansible.builtin.shell: |
-        curl -sfL https://get.k3s.io | \
+        curl -4 -sfL https://get.k3s.io | \
           INSTALL_K3S_VERSION=v1.29.10+k3s1 \
           INSTALL_K3S_EXEC="server --tls-san {{ k3s_public_ip }} --write-kubeconfig-mode 644 --disable traefik --disable servicelb" \
           sh -
@@ -77,7 +84,7 @@
       changed_when: false
 
     - name: Install Helm
-      ansible.builtin.shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      ansible.builtin.shell: curl -4 -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
       args:
         creates: /usr/local/bin/helm
 

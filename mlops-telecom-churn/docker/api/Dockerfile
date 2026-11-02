@@ -3,6 +3,9 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
+# Prefer IPv4: the cloud VMs have no IPv6 route and some CDNs publish AAAA.
+RUN echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
