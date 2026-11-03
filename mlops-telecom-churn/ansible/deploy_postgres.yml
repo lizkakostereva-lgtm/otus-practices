@@ -33,6 +33,20 @@
       shell: |
         psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ pg_db }}'" | grep -q 1 || createdb -O {{ pg_user }} {{ pg_db }}
 
+    # The full variant keeps Airflow metadata in the same PostgreSQL VM,
+    # in its own role/database.
+    - name: Create airflow role
+      become: yes
+      become_user: postgres
+      shell: |
+        psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ airflow_pg_user }}'" | grep -q 1 || psql -c "CREATE ROLE {{ airflow_pg_user }} LOGIN PASSWORD '{{ postgres_password }}';"
+
+    - name: Create airflow database
+      become: yes
+      become_user: postgres
+      shell: |
+        psql -tAc "SELECT 1 FROM pg_database WHERE datname='airflow'" | grep -q 1 || createdb -O {{ airflow_pg_user }} airflow
+
     - name: Listen on all interfaces
       become: yes
       lineinfile:
@@ -44,7 +58,7 @@
       become: yes
       lineinfile:
         path: /etc/postgresql/14/main/pg_hba.conf
-        line: "host {{ pg_db }} {{ pg_user }} 10.130.0.0/24 md5"
+        line: "host all all 10.0.0.0/8 md5"
 
     - name: Restart PostgreSQL
       systemd:

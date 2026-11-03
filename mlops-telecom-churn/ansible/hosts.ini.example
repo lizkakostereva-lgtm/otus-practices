@@ -1,5 +1,15 @@
+# Fill from `terraform -chdir=terraform output`:
+#   postgres_public_ip / mlflow_public_ip / airflow_public_ip
+# All three VMs have public IPs with SSH open. DB traffic (5432) and MLflow
+# (5000) between the VMs and the cluster go over the internal subnet, so
+# vars.yml holds the *internal* addresses (see vars.yml.example).
+# SSH key is the one referenced in terraform.tfvars (ssh_public_key).
+
 [postgres]
-postgres-vm ansible_host=<POSTGRES_VM_IP> ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa
+postgres-vm ansible_host=<POSTGRES_PUBLIC_IP> ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/mlops_diploma
 
 [mlflow]
-mlflow-vm ansible_host=<MLFLOW_VM_IP> ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa
+mlflow-vm ansible_host=<MLFLOW_PUBLIC_IP> ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/mlops_diploma
+
+[airflow]
+airflow-vm ansible_host=<AIRFLOW_PUBLIC_IP> ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/mlops_diploma

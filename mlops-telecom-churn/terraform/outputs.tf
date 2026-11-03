@@ -69,6 +69,34 @@ output "ci_sa_key_json" {
   sensitive = true
 }
 
+output "services_subnet_id" {
+  description = "Subnet for the Dataproc operators (cluster subnetwork, NAT-routed)"
+  value       = yandex_vpc_subnet.services.id
+}
+
+output "dataproc_security_group_id" {
+  description = "Security group passed to DataprocCreateClusterOperator"
+  value       = yandex_vpc_security_group.dataproc.id
+}
+
+output "dataproc_service_account_id" {
+  value = yandex_iam_service_account.dataproc.id
+}
+
+# Authorized key for the Airflow "yandexcloud" connection (see dataproc.tf):
+# put it into the Extra field as {"service_account_json": <this JSON>, ...}
+output "dataproc_sa_key_json" {
+  value = jsonencode({
+    id                 = yandex_iam_service_account_key.dataproc.id
+    service_account_id = yandex_iam_service_account.dataproc.service_account_id
+    created_at         = yandex_iam_service_account_key.dataproc.created_at
+    key_algorithm      = "RSA_2048"
+    public_key         = yandex_iam_service_account_key.dataproc.public_key
+    private_key        = yandex_iam_service_account_key.dataproc.private_key
+  })
+  sensitive = true
+}
+
 output "kubeconfig_command" {
   value = "yc managed-kubernetes cluster get-credentials --id ${yandex_kubernetes_cluster.main.id} --external --force"
 }

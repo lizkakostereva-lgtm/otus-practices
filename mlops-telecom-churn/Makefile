@@ -1,6 +1,6 @@
 # MLOps Telecom Churn - Makefile (Yandex Cloud + Terraform + Airflow)
 
-.PHONY: help setup init-data preprocess train evaluate api build up-local down-local test lint dvc-init dvc-repro promote local-pipeline tf-init tf-plan tf-apply tf-destroy sync-dags k8s-deploy k8s-delete load-test clean
+.PHONY: help setup init-data preprocess train evaluate api build up-local down-local test lint dvc-init dvc-repro promote local-pipeline tf-init tf-plan tf-apply tf-destroy tf-output sync-dag-assets k8s-deploy k8s-delete load-test clean ansible-prep provision-mlflow provision-airflow deploy-k8s
 
 help:
 	@echo "MLOps Telecom Churn (YC + Terraform + Airflow):"
@@ -10,11 +10,17 @@ help:
 	@echo "  make api           - Run FastAPI"
 	@echo "  make build         - Build API image"
 	@echo "  make test          - Run tests"
-	@echo "  make tf-init       - terraform init"
+	@echo "  make tf-init       - terraform init (quota stand: -chdir=terraform-quota)"
 	@echo "  make tf-plan       - terraform plan"
-	@echo "  make tf-apply      - terraform apply (VPC, S3, Airflow, K8s)"
+	@echo "  make tf-apply      - terraform apply (full: VPC, managed K8s, Spark, VMs)"
 	@echo "  make tf-destroy    - terraform destroy"
-	@echo "  make sync-dags     - Upload DAGs to S3 bucket for Managed Airflow"
+	@echo "  make tf-output     - terraform output"
+	@echo "  make sync-dag-assets - Upload DAGs + spark scripts to the S3 DAG bucket"
+	@echo "  make ansible-prep  - Create hosts.ini/vars.yml from examples"
+	@echo "  make provision-mlflow - Provision postgres + MLflow VMs (full variant)"
+	@echo "  make provision-airflow - Provision the Airflow VM (full variant)"
+	@echo "  make deploy-k8s    - Apply manifests to the managed K8s (full variant)"
+	@echo "  make monitoring-install - Install kube-prometheus-stack"
 	@echo "  make k8s-deploy    - Deploy API to K8s"
 	@echo "  make k8s-delete    - Delete API from K8s"
 	@echo "  make load-test     - Load test instructions"
@@ -76,8 +82,34 @@ tf-apply:
 tf-destroy:
 	cd terraform && terraform destroy
 
-sync-dags:
-	aws s3 sync airflow/dags/ s3://$(BUCKET_DAGS)/dags/ --endpoint-url=https://storage.yandexcloud.net
+tf-output:
+	cd terraform && terraform output
+
+sync-dag-assets:
+	@test -n "$$BUCKET_DAGS" || (echo "Set BUCKET_DAGS"; exit 1)
+	aws s3 sync airflow/dags/ s3://$$BUCKET_DAGS/dags/ --endpoint-url=https://storage.yandexcloud.net
+	aws s3 sync spark/ s3://$$BUCKET_DAGS/spark/ --endpoint-url=https://storage.yandexcloud.net
+
+ansible-prep:
+	@cp -n ansible/hosts.ini.example ansible/hosts.ini || true
+	@cp -n ansible/vars.yml.example ansible/vars.yml || true
+	@echo "Edit ansible/hosts.ini and ansible/vars.yml with IPs and keys from terraform output"
+
+provision-mlflow:
+	cd ansible && ansible-playbook -i hosts.ini deploy_postgres.yml
+	cd ansible && ansible-playbook -i hosts.ini deploy_mlflow.yml
+
+provision-airflow:
+	cd ansible && ansible-playbook -i hosts.ini deploy_airflow.yml
+
+deploy-k8s:
+	cd ansible && ansible-playbook deploy_k8s.yml
+
+monitoring-install:
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
+	helm repo update
+	kubectl create namespace monitoring 2>/dev/null || true
+	helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring -f monitoring/kube-prometheus-stack-values.yaml --version 58.7.2
 
 k8s-deploy:
 	kubectl apply -f k8s/namespace.yaml
@@ -98,22 +130,3 @@ load-test:
 clean:
 	rm -rf __pycache__ .pytest_cache .ruff_cache
 	find . -name "*.pyc" -delete
-
-ansible-prep:
-	@cp -n ansible/hosts.ini.example ansible/hosts.ini || true
-	@cp -n ansible/vars.yml.example ansible/vars.yml || true
-	@echo "Edit ansible/hosts.ini and ansible/vars.yml with IPs and keys from terraform output"
-
-provision-mlflow:
-	cd ansible && ansible-playbook -i hosts.ini deploy_postgres.yml
-	cd ansible && ansible-playbook -i hosts.ini deploy_mlflow.yml
-
-monitoring-install:
-	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
-	helm repo update
-	kubectl create namespace monitoring 2>/dev/null || true
-	helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring -f monitoring/kube-prometheus-stack-values.yaml --version 58.7.2
-
-sync-dags:
-	@test -n "$$BUCKET_DAGS" || (echo "Set BUCKET_DAGS"; exit 1)
-	aws s3 sync airflow/dags/ s3://$$BUCKET_DAGS/dags/ --endpoint-url=https://storage.yandexcloud.net
