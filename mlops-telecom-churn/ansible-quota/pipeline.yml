@@ -24,6 +24,17 @@
       register: pipeline
       changed_when: "'ROC-AUC' in pipeline.stdout"
 
+    # The Airflow containers run as the airflow user and write into the same
+    # bind-mounted repo, while this step runs as root. Open up the output dirs
+    # so both can overwrite each other's files.
+    - name: Make pipeline outputs writable for the Airflow user
+      ansible.builtin.command:
+        cmd: >-
+          docker run --rm -v {{ repo_root }}:/app -w /app
+          {{ image }}
+          sh -c 'chmod -R a+rwX data models || true'
+      changed_when: false
+
     - name: Pipeline output
       ansible.builtin.debug:
         var: pipeline.stdout_lines
