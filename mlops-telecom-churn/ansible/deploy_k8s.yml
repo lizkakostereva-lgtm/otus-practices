@@ -1,0 +1,152 @@
+---
+# Full-variant deploy: apply the k8s/ manifests to the MANAGED Kubernetes from
+# terraform/kubernetes.tf. Runs on the control machine (kubectl talks to the
+# cluster API, no VM SSH needed).
+#
+# Prerequisites:
+#   1. terraform applied (terraform/),
+#   2. kubeconfig configured:
+#        yc managed-kubernetes cluster get-credentials --name mlops-churn-cluster --external
+#      or set kubeconfig_path below.
+#
+# Renders REPLACE_REGISTRY_ID in the manifests with the real registry id,
+# creates the churn-secrets / yc-cr secrets and the runtime ConfigMap, then
+# applies namespace, API, Service, HPA, CronJob and ServiceMonitor.
+
+- name: Deploy the churn API to the managed Kubernetes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    kubeconfig_env: "{{ lookup('env', 'KUBECONFIG') }}"
+    kubeconfig_path: "{{ kubeconfig_env | default(lookup('env', 'HOME') + '/.kube/config', true) }}"
+    namespace: mlops-churn
+    registry_id: "{{ lookup('env', 'TF_REGISTRY_ID') }}"
+    sa_key_json: "{{ lookup('env', 'TF_SA_KEY_JSON') }}"          # terraform output ci_sa_key_json
+    s3_access_key: "{{ lookup('env', 'TF_S3_ACCESS_KEY') }}"
+    s3_secret_key: "{{ lookup('env', 'TF_S3_SECRET_KEY') }}"
+    bucket_data: "{{ lookup('env', 'TF_BUCKET_DATA') }}"
+    s3_raw_key: raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
+    mlflow_uri: "{{ lookup('env', 'TF_MLFLOW_URI') }}"            # http://<mlflow_public_ip>:5000
+    install_monitoring: "{{ lookup('env', 'INSTALL_MONITORING') | default('false') }}"
+
+  pre_tasks:
+    - name: Check that the environment is complete
+      ansible.builtin.fail:
+        msg: >-
+          Missing environment: set TF_REGISTRY_ID, TF_SA_KEY_JSON, TF_S3_ACCESS_KEY,
+          TF_S3_SECRET_KEY, TF_BUCKET_DATA, TF_MLFLOW_URI
+          (see `terraform -chdir=terraform output`).
+      when: not registry_id or not sa_key_json or not s3_access_key or not bucket_data or not mlflow_uri
+
+    - name: Check kubeconfig
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kc
+
+    - name: Fail when kubeconfig is missing
+      ansible.builtin.fail:
+        msg: "kubeconfig not found at {{ kubeconfig_path }}; run `yc managed-kubernetes cluster get-credentials`."
+      when: not kc.stat.exists
+
+  tasks:
+    - name: Create the namespace
+      ansible.builtin.command:
+        cmd: kubectl apply -f k8s/namespace.yaml
+        chdir: "{{ playbook_dir }}/.."
+
+    - name: Create the S3 credentials secret
+      ansible.builtin.shell: |
+        kubectl -n {{ namespace }} create secret generic churn-secrets \
+          --from-literal=AWS_ACCESS_KEY_ID='{{ s3_access_key }}' \
+          --from-literal=AWS_SECRET_ACCESS_KEY='{{ s3_secret_key }}' \
+          --dry-run=client -o yaml | kubectl apply -f -
+      changed_when: false
+
+    - name: Store the registry key
+      ansible.builtin.copy:
+        content: "{{ sa_key_json }}"
+        dest: /tmp/mlops-ci-key.json
+        mode: "0600"
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Create the cr.yandex imagePullSecret
+      ansible.builtin.shell: |
+        kubectl -n {{ namespace }} create secret docker-registry yc-cr \
+          --docker-server=cr.yandex \
+          --docker-username=json_key \
+          --docker-password="$(cat /tmp/mlops-ci-key.json)" \
+          --dry-run=client -o yaml | kubectl apply -f -
+      changed_when: false
+
+    - name: Render the runtime ConfigMap
+      ansible.builtin.shell: |
+        kubectl -n {{ namespace }} create configmap churn-api-config \
+          --from-literal=API_HOST=0.0.0.0 \
+          --from-literal=API_PORT=8000 \
+          --from-literal=LOG_LEVEL=INFO \
+          --from-literal=MODEL_NAME=telecom-churn-model \
+          --from-literal=MODEL_STAGE=Production \
+          --from-literal=MLFLOW_TRACKING_URI='{{ mlflow_uri }}' \
+          --from-literal=S3_ENDPOINT_URL='{{ s3_endpoint | default("https://storage.yandexcloud.net") }}' \
+          --from-literal=MLFLOW_S3_ENDPOINT_URL='{{ s3_endpoint | default("https://storage.yandexcloud.net") }}' \
+          --from-literal=S3_DATA_BUCKET='{{ bucket_data }}' \
+          --from-literal=S3_RAW_KEY='{{ s3_raw_key }}' \
+          --dry-run=client -o yaml | kubectl apply -f -
+      changed_when: false
+
+    - name: Render the manifests with the real registry id
+      ansible.builtin.shell: |
+        mkdir -p /tmp/k8s-rendered
+        for f in deployment.yaml cronjob-retrain.yaml; do
+          sed 's|REPLACE_REGISTRY_ID|{{ registry_id }}|g' "k8s/$f" > "/tmp/k8s-rendered/$f"
+        done
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: false
+
+    - name: Apply the API, Service, HPA, CronJob and ServiceMonitor
+      ansible.builtin.command:
+        cmd: >-
+          kubectl apply
+          -f k8s/service.yaml
+          -f k8s/hpa.yaml
+          -f /tmp/k8s-rendered/deployment.yaml
+          -f /tmp/k8s-rendered/cronjob-retrain.yaml
+          -f k8s/servicemonitor.yaml
+      args:
+        chdir: "{{ playbook_dir }}/.."
+    # Prometheus Operator (ServiceMonitor) must already be installed:
+    #   make monitoring-install (requires kube-prometheus-stack).
+
+    - name: Wait for the rollout
+      ansible.builtin.command:
+        cmd: kubectl -n {{ namespace }} rollout status deployment/churn-api --timeout=300s
+      register: rollout
+      failed_when: rollout.rc != 0
+
+    - name: Smoke test /health through the NodePort
+      ansible.builtin.shell: |
+        NODE_IP="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')"
+        for i in $(seq 1 24); do
+          if curl -fsS "http://${NODE_IP}:30080/health"; then exit 0; fi
+          sleep 5
+        done
+        echo "API did not become healthy"; exit 1
+      args:
+        executable: /bin/bash
+
+    - name: Optional - install kube-prometheus-stack
+      ansible.builtin.shell: |
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
+        helm repo update
+        kubectl create namespace monitoring 2>/dev/null || true
+        helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+          -n monitoring \
+          -f monitoring/kube-prometheus-stack-values.yaml \
+          --version 58.7.2
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      when: install_monitoring | bool

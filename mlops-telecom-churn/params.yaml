@@ -1,0 +1,26 @@
+data:
+  raw_path: data/raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
+  processed_path: data/processed/cleaned.csv
+  test_size: 0.2
+  random_state: 42
+
+features:
+  target: Churn
+  drop_cols: ["customerID"]
+
+train:
+  model: logistic_regression
+  C: 1.0
+  max_iter: 1000
+  class_weight: balanced
+
+mlflow:
+  experiment_name: telecom-churn
+  registered_model_name: telecom-churn-model
+
+promote:
+  metric_name: roc_auc
+  min_improvement: 0.001
+
+retrain:
+  threshold_roc_auc: 0.8

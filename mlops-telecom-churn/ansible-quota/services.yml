@@ -1,0 +1,169 @@
+---
+# PostgreSQL + MLflow + Airflow on the services VM.
+#
+# GitHub is not reachable from this VM, so the project is uploaded from the
+# control machine as a tarball instead of `git clone`.
+- name: Package the project
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Create the project archive
+      ansible.builtin.command:
+        cmd: >-
+          tar czf /tmp/mlops-repo.tar.gz
+          --exclude=.git --exclude=.venv --exclude=__pycache__
+          --exclude=models --exclude=data/raw --exclude=data/processed
+          --exclude=.terraform --exclude=.terraform.lock.hcl
+          --exclude=.infra-backup --exclude=mlruns --exclude=mlartifacts
+          --exclude=terraform/terraform.tfvars
+          --exclude=terraform-quota/terraform.tfvars
+          --exclude=inventory.ini --exclude=group_vars/all.yml
+          .
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: false
+
+- name: Prepare the services VM (docker compose stack)
+  hosts: services
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for cloud-init / apt lock
+      ansible.builtin.shell: |
+        cloud-init status --wait >/dev/null 2>&1 || true
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - git
+          - curl
+          - jq
+          - unzip
+          - ca-certificates
+          - python3-pip
+        state: present
+        update_cache: true
+        cache_valid_time: 600
+
+    - name: Prefer IPv4 for name resolution
+      ansible.builtin.lineinfile:
+        path: /etc/gai.conf
+        line: "precedence ::ffff:0:0/96  100"
+        regexp: '^precedence ::ffff:0:0/96'
+        state: present
+
+    - name: Install Docker (official convenience script)
+      ansible.builtin.shell: curl -4 -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+
+    - name: Add ubuntu to the docker group
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+    - name: Create /opt/mlops
+      ansible.builtin.file:
+        path: /opt/mlops
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Create the project directory
+      ansible.builtin.file:
+        path: "{{ repo_root }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Upload the project
+      ansible.builtin.unarchive:
+        src: /tmp/mlops-repo.tar.gz
+        dest: "{{ repo_root }}"
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Service account key for cr.yandex
+      ansible.builtin.copy:
+        content: "{{ sa_key_json }}"
+        dest: /opt/mlops/sa-key.json
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Log in to cr.yandex
+      ansible.builtin.shell: |
+        docker login cr.yandex -u json_key --password-stdin < /opt/mlops/sa-key.json
+      changed_when: false
+
+    - name: Pull the pre-built images
+      ansible.builtin.command:
+        cmd: docker pull {{ item }}
+      loop:
+        - "{{ image }}"
+        - "{{ postgres_image }}"
+        - "{{ mlflow_image }}"
+        - "{{ airflow_image }}"
+      changed_when: false
+
+    - name: Render .env for docker compose
+      ansible.builtin.template:
+        src: templates/env.j2
+        dest: /opt/mlops/.env
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Install the compose file
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/docker-compose.yc.yml"
+        dest: /opt/mlops/docker-compose.yml
+        remote_src: true
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    - name: Start PostgreSQL, MLflow and Airflow
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f /opt/mlops/docker-compose.yml
+          --env-file /opt/mlops/.env up -d
+      register: compose_up
+      changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr"
+
+    - name: Wait for MLflow
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5000/health
+        status_code: 200
+        timeout: 5
+      register: mlflow_health
+      retries: 60
+      delay: 5
+      until: mlflow_health.status == 200
+
+    - name: Wait for Airflow
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/health
+        status_code: 200
+        timeout: 5
+      register: airflow_health
+      retries: 90
+      delay: 5
+      until: airflow_health.status == 200
+
+    - name: Show endpoints
+      ansible.builtin.debug:
+        msg:
+          - "MLflow:  {{ mlflow_public_uri }}"
+          - "Airflow: {{ airflow_public_uri }} (admin/admin)"

@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: churn-api-monitor
+  namespace: mlops-churn
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: churn-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

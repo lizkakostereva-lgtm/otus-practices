@@ -1,0 +1,156 @@
+---
+# Full-variant Airflow VM: docker compose with webserver + scheduler
+# (LocalExecutor), DAGs from the repo checkout, ML S3 creds, and the
+# "yandexcloud" connection used by the Dataproc operators of
+# airflow/dags/churn_spark_dataproc_dag.py.
+#
+# Metadata DB: the postgres VM (see deploy_postgres.yml, role/db "airflow").
+
+- name: Package the project
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Create the project archive
+      ansible.builtin.command:
+        cmd: >-
+          tar czf /tmp/mlops-repo.tar.gz
+          --exclude=.git --exclude=.venv --exclude=__pycache__
+          --exclude=models --exclude=data/raw --exclude=data/processed
+          --exclude=.terraform --exclude=.terraform.lock.hcl
+          --exclude=.infra-backup --exclude=mlruns --exclude=mlartifacts
+          --exclude=terraform/terraform.tfvars
+          --exclude=terraform-quota/terraform.tfvars
+          --exclude=inventory.ini --exclude=group_vars/all.yml
+          .
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: false
+
+- name: Provision the Airflow VM
+  hosts: airflow
+  become: true
+  gather_facts: false
+
+  vars:
+    repo_root: /opt/mlops/repo
+
+  pre_tasks:
+    # authorized key JSON of the dataproc SA (terraform output dataproc_sa_key_json)
+    - name: Normalize the Dataproc SA key to a JSON string
+      ansible.builtin.set_fact:
+        dp_sa_connection_extra: "{{ (dp_sa_json | tojson) if dp_sa_json is mapping else dp_sa_json }}"
+
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for cloud-init / apt lock
+      ansible.builtin.shell: |
+        cloud-init status --wait >/dev/null 2>&1 || true
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - jq
+          - ca-certificates
+          - python3-pip
+        state: present
+        update_cache: true
+        cache_valid_time: 600
+
+    - name: Prefer IPv4 for name resolution
+      ansible.builtin.lineinfile:
+        path: /etc/gai.conf
+        line: "precedence ::ffff:0:0/96  100"
+        regexp: '^precedence ::ffff:0:0/96'
+        state: present
+
+    - name: Install Docker (official convenience script)
+      ansible.builtin.shell: curl -4 -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+
+    - name: Add ubuntu to the docker group
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+    - name: Create /opt/mlops directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - /opt/mlops
+        - /opt/mlops/repo
+        - /opt/mlops/logs
+
+    - name: Upload the project
+      ansible.builtin.unarchive:
+        src: /tmp/mlops-repo.tar.gz
+        dest: "{{ repo_root }}"
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Build the Airflow image (repo Dockerfile + yandex provider)
+      become_user: ubuntu
+      community.docker.docker_image:
+        name: "{{ airflow_image }}"
+        tag: "2.9.3"
+        source: build
+        build:
+          dockerfile: docker/airflow/Dockerfile
+          path: "{{ repo_root }}"
+          platform: linux/amd64
+
+    - name: Render the Airflow compose stack
+      ansible.builtin.template:
+        src: docker-compose.airflow.j2
+        dest: /opt/mlops/docker-compose.yml
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    - name: Start the Airflow stack
+      become_user: ubuntu
+      ansible.builtin.command:
+        cmd: docker compose -f /opt/mlops/docker-compose.yml up -d
+      environment:
+        PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      register: compose_up
+      changed_when: compose_up.stdout != ""
+
+    - name: Create the admin user and migrate the DB
+      become_user: ubuntu
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f /opt/mlops/docker-compose.yml run --rm airflow-init
+      changed_when: true
+
+    - name: Register the yandexcloud connection (Dataproc operators)
+      become_user: ubuntu
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f /opt/mlops/docker-compose.yml exec -T airflow-webserver
+          airflow connections add yc-dataproc
+          --conn-type yandexcloud
+          --conn-extra {{ dp_sa_connection_extra }}
+      changed_when: true
+
+    - name: Wait for the Airflow UI
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8080/health"
+        status_code: 200
+      become_user: ubuntu
+      register: health
+      retries: 40
+      delay: 5
+      until: health.status == 200

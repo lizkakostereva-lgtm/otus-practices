@@ -1,0 +1,137 @@
+---
+# Build the container images on the k3s VM and push them to Yandex
+# Container Registry.
+#
+# Reason: Docker Hub is not reachable from the services VM, so that VM can only
+# pull images from cr.yandex. The k3s VM has full internet access, therefore it
+# builds everything (including a copy of postgres:15) and pushes to the registry.
+- name: Package the project
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Create the project archive
+      ansible.builtin.command:
+        cmd: >-
+          tar czf /tmp/mlops-repo.tar.gz
+          --exclude=.git --exclude=.venv --exclude=__pycache__
+          --exclude=models --exclude=data/raw --exclude=data/processed
+          --exclude=.terraform --exclude=.terraform.lock.hcl
+          --exclude=.infra-backup --exclude=mlruns --exclude=mlartifacts
+          --exclude=terraform/terraform.tfvars
+          --exclude=terraform-quota/terraform.tfvars
+          --exclude=inventory.ini --exclude=group_vars/all.yml
+          .
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: false
+
+- name: Build and push the images
+  hosts: k3s
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name: [curl, ca-certificates, tar]
+        state: present
+        update_cache: true
+        cache_valid_time: 600
+
+    - name: Prefer IPv4 for name resolution
+      ansible.builtin.lineinfile:
+        path: /etc/gai.conf
+        line: "precedence ::ffff:0:0/96  100"
+        regexp: '^precedence ::ffff:0:0/96'
+        state: present
+
+    - name: Install Docker (official convenience script)
+      ansible.builtin.shell: curl -4 -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+
+    - name: Create /opt/mlops/build
+      ansible.builtin.file:
+        path: /opt/mlops/build
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Upload the project
+      ansible.builtin.unarchive:
+        src: /tmp/mlops-repo.tar.gz
+        dest: /opt/mlops/build
+        remote_src: false
+
+    - name: Service account key for cr.yandex
+      ansible.builtin.copy:
+        content: "{{ sa_key_json }}"
+        dest: /opt/mlops/build/sa-key.json
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Log in to cr.yandex
+      ansible.builtin.shell: |
+        docker login cr.yandex -u json_key --password-stdin < /opt/mlops/build/sa-key.json
+      changed_when: false
+
+    - name: Build the API image
+      ansible.builtin.command:
+        cmd: docker build --provenance=false --sbom=false -t {{ image }} -f docker/api/Dockerfile .
+        chdir: /opt/mlops/build
+      register: build_api
+      changed_when: "'naming to' in build_api.stdout or 'exporting' in build_api.stdout"
+
+    - name: Push the API image
+      ansible.builtin.command:
+        cmd: docker push {{ image }}
+      changed_when: false
+
+    - name: Build the Airflow image
+      ansible.builtin.command:
+        cmd: docker build --provenance=false --sbom=false -t {{ airflow_image }} -f docker/airflow/Dockerfile .
+        chdir: /opt/mlops/build
+
+    - name: Push the Airflow image
+      ansible.builtin.command:
+        cmd: docker push {{ airflow_image }}
+      changed_when: false
+
+    - name: Build the MLflow image
+      ansible.builtin.command:
+        cmd: docker build --provenance=false --sbom=false -t {{ mlflow_image }} -f docker/mlflow/Dockerfile .
+        chdir: /opt/mlops/build
+
+    - name: Push the MLflow image
+      ansible.builtin.command:
+        cmd: docker push {{ mlflow_image }}
+      changed_when: false
+
+    - name: Mirror postgres:15 into the registry
+      ansible.builtin.shell: |
+        docker pull postgres:15
+        docker tag postgres:15 {{ postgres_image }}
+        docker push {{ postgres_image }}
+      changed_when: false
+
+    # The VM has a 20 GB disk: free the build cache and base layers after the
+    # images are safely in the registry.
+    - name: Free the build cache
+      ansible.builtin.command:
+        cmd: docker builder prune -af
+      changed_when: false
+
+    - name: Show pushed images
+      ansible.builtin.debug:
+        msg:
+          - "{{ image }}"
+          - "{{ airflow_image }}"
+          - "{{ mlflow_image }}"
+          - "{{ postgres_image }}"

@@ -1,0 +1,33 @@
+# Copy to vars.yml and fill from terraform outputs.
+pg_user: mlflow
+pg_password: mlflowpass
+pg_db: mlflow
+pg_host: <POSTGRES_VM_INTERNAL_IP>       # services subnet, e.g. 10.150.10.x:5432
+
+# Airflow metadata DB (same PostgreSQL VM, separate role/db).
+airflow_pg_user: airflow
+postgres_password: airflowpass
+
+# --- Vars consumed by deploy_airflow.yml ----------------------------------
+airflow_admin_user: admin
+airflow_admin_password: admin
+airflow_image: mlops-airflow             # built on the VM from docker/airflow/Dockerfile
+mlflow_uri: http://<MLFLOW_VM_INTERNAL_IP>:5000
+s3_access_key: <MLFLOW_SA_STATIC_KEY_ACCESS>   # terraform output -raw s3_access_key
+s3_secret_key: <MLFLOW_SA_STATIC_KEY_SECRET>   # terraform output -raw s3_secret_key
+bucket_data: mlops-churn-data            # terraform output bucket_data
+bucket_dags: mlops-churn-dags            # terraform output bucket_dags
+s3_raw_key: raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
+s3_endpoint_url: https://storage.yandexcloud.net
+# Authorized key JSON of the dataproc SA:
+#   terraform -chdir=terraform output -raw dataproc_sa_key_json
+dp_sa_json: '{"id": "...", "service_account_id": "...", ...}'
+yc_ssh_public_key: ssh-ed25519 AAAA...  # same ssh_public_key as terraform.tfvars
+
+# --- Vars consumed by deploy_mlflow.yml -----------------------------------
+mlflow_host: 0.0.0.0
+mlflow_port: 5000
+mlflow_artifact_root: s3://<MLFLOW_BUCKET>/artifacts
+aws_access_key_id: <MLFLOW_SA_STATIC_KEY_ACCESS>
+aws_secret_access_key: <MLFLOW_SA_STATIC_KEY_SECRET>
+s3_endpoint_url: https://storage.yandexcloud.net

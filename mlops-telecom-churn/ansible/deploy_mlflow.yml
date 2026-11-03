@@ -1,0 +1,62 @@
+- name: Deploy MLflow Tracking Server
+  hosts: mlflow
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Install prerequisites
+      apt:
+        name:
+          - python3-venv
+          - python3-pip
+          - libpq-dev
+        state: present
+        update_cache: yes
+
+    - name: Create /opt/mlflow
+      file:
+        path: /opt/mlflow
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Create virtualenv
+      become: yes
+      become_user: ubuntu
+      command: python3 -m venv /opt/mlflow/venv
+      args:
+        creates: /opt/mlflow/venv/bin/pip
+
+    - name: Install MLflow
+      become: yes
+      become_user: ubuntu
+      pip:
+        virtualenv: /opt/mlflow/venv
+        name:
+          - "mlflow==2.16.2"
+          - "psycopg2-binary"
+          - "boto3"
+          - "pymysql"
+
+    - name: Deploy mlflow systemd unit
+      template:
+        src: mlflow.service.j2
+        dest: /etc/systemd/system/mlflow.service
+
+    - name: Enable and start MLflow
+      systemd:
+        name: mlflow
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Wait for MLflow
+      uri:
+        url: "http://127.0.0.1:5000/health"
+        status_code: 200
+      register: health
+      retries: 40
+      delay: 5
+      until: health.status == 200
