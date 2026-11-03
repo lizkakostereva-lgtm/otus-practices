@@ -44,10 +44,9 @@
   2. **Test** (`pytest -q`)
   3. **Build** Docker-образа (`docker/build-push-action`, multi-stage `docker/api/Dockerfile`)
   4. **Push** в **GitHub Container Registry (GHCR)** через встроенный `GITHUB_TOKEN` — не требует никаких секретов
-  5. **Push в Yandex Container Registry** — опционально, если заданы `YC_SA_KEY` (secret) и `YC_REGISTRY_ID` (variable)
-  6. **Deploy в k3s** — опционально, `workflow_dispatch` с `deploy=true` и секретом `KUBECONFIG_B64`
-- **Триггеры**: push в любую ветку (изменения в `mlops-telecom-churn/**`), pull request, ручной запуск.
-- **Ручной запуск**: Actions → `MLOps Telecom Churn CI/CD` → Run workflow (можно включить/выключить push образа и деплой).
+  5. **Push в Yandex Container Registry** — если заданы `YC_SA_KEY` (secret) и `YC_REGISTRY_ID` (variable); без них — fallback в GHCR, пайплайн остаётся зелёным
+  6. **Deploy в k3s** — автоматически после push (`set image` + `rollout status` + smoke-тест `/health`); пока не заданы `KUBECONFIG_B64` и `YC_REGISTRY_ID`, шаг пропускается с notice, не ломая пайплайн
+- **Триггеры**: push в любую ветку (изменения в `mlops-telecom-churn/**`) и pull request.
 
 ## 6. Деплой модели в k8s. Масштабирование под нагрузку
 
