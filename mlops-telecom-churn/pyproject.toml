@@ -1,0 +1,8 @@
+# Pin the ruff rule set so CI behavior does not drift with ruff releases.
+# The rules mirror ruff's defaults ("Organize imports" was added there).
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

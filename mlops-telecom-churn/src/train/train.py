@@ -1,13 +1,13 @@
 import os
-import yaml
+
 import joblib
 import mlflow
 import mlflow.sklearn
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import roc_auc_score, f1_score, accuracy_score
 
 from src.data.load import load_config
 from src.features.build_features import build_preprocessor
@@ -58,7 +58,7 @@ def main():
             model_uri = f"runs:/{run_id}/model"
             mlflow.register_model(model_uri, config["mlflow"]["registered_model_name"])
             print("Registered model in Model Registry")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"Registry registration skipped: {e}")
         print(f"Logged model to MLflow. ROC-AUC={roc_auc:.4f}, F1={f1:.4f}")
 

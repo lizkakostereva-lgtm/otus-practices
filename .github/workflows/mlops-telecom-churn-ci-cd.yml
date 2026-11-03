@@ -1,14 +1,12 @@
 ---
-# Diploma project CI/CD: lint -> test -> build -> push (GHCR, optionally YC CR)
-# -> optional deploy to k3s.
+# Diploma project CI/CD: lint -> test -> build -> push (Yandex Container
+# Registry, GHCR fallback) -> optional deploy to k3s.
 #
-# Works out of the box on any branch: the image is published to GitHub Container
-# Registry with the built-in GITHUB_TOKEN (no secrets needed).
-#
-# Optional (Settings -> Secrets and variables -> Actions):
-#   Secret  YC_SA_KEY        authorized key JSON of the CI service account
-#   Var     YC_REGISTRY_ID   cr.yandex/<id>, enables the YC Container Registry push
-#   Secret  KUBECONFIG_B64   base64 of the k3s kubeconfig, enables the deploy job
+# The primary registry is cr.yandex. To use it, add in
+# Settings -> Secrets and variables -> Actions:
+#   Secret  YC_SA_KEY        authorized key JSON (`terraform -chdir=terraform-quota output -raw sa_key_json`)
+#   Var     YC_REGISTRY_ID   the registry id (`terraform -chdir=terraform-quota output -raw registry_id`)
+# Without these secrets the pipeline stays green and falls back to GHCR.
 name: MLOps Telecom Churn CI/CD
 
 on:
@@ -57,8 +55,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+      # Pinned: ruff releases extend the default rule set, which would
+      # otherwise break linting on old code without config changes.
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.17.3
       - name: ruff check
         run: ruff check app src tests scripts
 
@@ -96,55 +96,79 @@ jobs:
           file: mlops-telecom-churn/docker/api/Dockerfile
           push: false
           tags: ${{ env.IMAGE }}:ci
+          provenance: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   push:
-    name: Push image
+    name: Push image (cr.yandex)
     runs-on: ubuntu-latest
     needs: [build]
     if: >-
-      (github.event_name == 'push' && (github.ref != 'refs/heads/main' || true)) ||
+      github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.push_image)
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
 
+      - name: Check YC CR credentials
+        id: yc
+        env:
+          YC_SA_KEY: ${{ secrets.YC_SA_KEY }}
+          YC_REGISTRY_ID: ${{ vars.YC_REGISTRY_ID }}
+        run: |
+          if [ -n "${YC_SA_KEY:-}" ] && [ -n "${YC_REGISTRY_ID:-}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "YC_SA_KEY / YC_REGISTRY_ID are not configured: falling back to GHCR"
+          fi
+
+      # Primary registry: Yandex Container Registry.
+      - name: Log in to cr.yandex
+        if: steps.yc.outputs.available == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: cr.yandex
+          username: json_key
+          password: ${{ secrets.YC_SA_KEY }}
+
+      - name: Build and push to Yandex Container Registry
+        if: steps.yc.outputs.available == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: mlops-telecom-churn
+          file: mlops-telecom-churn/docker/api/Dockerfile
+          push: true
+          provenance: false # cr.yandex rejects attestation manifest indexes
+          tags: |
+            cr.yandex/${{ vars.YC_REGISTRY_ID }}/mlops-telecom-churn-api:${{ github.sha }}
+            cr.yandex/${{ vars.YC_REGISTRY_ID }}/mlops-telecom-churn-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Fallback when YC secrets are not yet configured: GHCR via GITHUB_TOKEN.
       - name: Log in to GHCR
+        if: steps.yc.outputs.available != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push to GHCR
+      - name: Build and push to GHCR (fallback)
+        if: steps.yc.outputs.available != 'true'
         uses: docker/build-push-action@v6
         with:
           context: mlops-telecom-churn
           file: mlops-telecom-churn/docker/api/Dockerfile
           push: true
+          provenance: false
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}
             ${{ env.IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Push to Yandex Container Registry (optional)
-        env:
-          YC_SA_KEY: ${{ secrets.YC_SA_KEY }}
-          YC_REGISTRY_ID: ${{ vars.YC_REGISTRY_ID }}
-        run: |
-          set -euo pipefail
-          if [ -z "${YC_SA_KEY:-}" ] || [ -z "${YC_REGISTRY_ID:-}" ]; then
-            echo "YC_SA_KEY / YC_REGISTRY_ID are not configured, skipping YC CR push"
-            exit 0
-          fi
-          echo "$YC_SA_KEY" | docker login cr.yandex -u json_key --password-stdin
-          docker pull "${IMAGE}:${GITHUB_SHA}"
-          docker tag "${IMAGE}:${GITHUB_SHA}" "cr.yandex/${YC_REGISTRY_ID}/mlops-telecom-churn-api:${GITHUB_SHA}"
-          docker tag "${IMAGE}:${GITHUB_SHA}" "cr.yandex/${YC_REGISTRY_ID}/mlops-telecom-churn-api:latest"
-          docker push "cr.yandex/${YC_REGISTRY_ID}/mlops-telecom-churn-api:${GITHUB_SHA}"
-          docker push "cr.yandex/${YC_REGISTRY_ID}/mlops-telecom-churn-api:latest"
 
   deploy:
     name: Deploy to k3s

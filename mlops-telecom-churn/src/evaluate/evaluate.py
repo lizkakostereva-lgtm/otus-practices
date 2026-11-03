@@ -1,7 +1,7 @@
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score, f1_score, classification_report
 import joblib
+import pandas as pd
+from sklearn.metrics import classification_report, f1_score, roc_auc_score
+from sklearn.model_selection import train_test_split
 
 from src.data.load import load_config
 
@@ -14,7 +14,7 @@ def main():
 
     X = df.drop(columns=[target] + drop_cols, errors="ignore")
     y = df[target]
-    X_train, X_test, y_train, y_test = train_test_split(
+    _, X_test, _, y_test = train_test_split(
         X, y, test_size=config["data"]["test_size"], random_state=config["data"]["random_state"], stratify=y
     )
 

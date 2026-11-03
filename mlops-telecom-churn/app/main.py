@@ -1,8 +1,10 @@
+import logging
+
 from fastapi import FastAPI, HTTPException
 from prometheus_fastapi_instrumentator import Instrumentator
-from app.schemas import CustomerFeatures, PredictionResponse, HealthResponse
+
 from app.predictor import predictor
-import logging
+from app.schemas import CustomerFeatures, HealthResponse, PredictionResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,7 +30,7 @@ def predict(features: CustomerFeatures):
     try:
         result = predictor.predict(features.model_dump())
         return PredictionResponse(**result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error(f"Prediction error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

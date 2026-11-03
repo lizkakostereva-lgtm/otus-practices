@@ -1,7 +1,8 @@
 import os
+
 import mlflow
-from mlflow.tracking import MlflowClient
 import yaml
+from mlflow.tracking import MlflowClient
 
 
 def load_config(path="params.yaml"):
@@ -37,7 +38,7 @@ def main():
             print(f"Promoted v{latest.version} to Production (improved)")
         else:
             print("Not promoted: insufficient improvement")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"Promote skipped/failed: {e}")
 
 
