@@ -1,6 +1,5 @@
-import pandas as pd
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
 def build_preprocessor(df, target="Churn", drop_cols=None):

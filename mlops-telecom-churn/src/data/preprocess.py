@@ -2,7 +2,7 @@ import os
 
 import pandas as pd
 
-from src.data.load import load_raw_data, load_config, upload_to_s3
+from src.data.load import load_config, load_raw_data, upload_to_s3
 
 
 def preprocess_data(df):

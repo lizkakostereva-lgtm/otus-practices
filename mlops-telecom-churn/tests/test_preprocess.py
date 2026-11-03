@@ -1,5 +1,6 @@
-from src.data.preprocess import preprocess_data
 import pandas as pd
+
+from src.data.preprocess import preprocess_data
 
 
 def test_preprocess_churn_mapping():
