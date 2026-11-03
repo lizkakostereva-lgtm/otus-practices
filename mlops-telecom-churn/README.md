@@ -98,17 +98,17 @@
 
 | Сервис | URL | Логин |
 |--------|-----|-------|
-| MLflow | http://51.250.9.220:5000 | — |
-| Airflow | http://51.250.9.220:8080 | `admin` / `admin` |
-| API (Swagger) | http://51.250.9.220:30080/docs | — |
-| Grafana | http://51.250.9.220:30300 | `admin` / `admin` |
-| Prometheus | http://51.250.9.220:30900 | — |
-| Alertmanager | http://51.250.9.220:30903 | — |
+| MLflow | http://51.250.77.18:5000 | — |
+| Airflow | http://51.250.77.18:8080 | `admin` / `admin` |
+| API (Swagger) | http://51.250.77.18:30080/docs | — |
+| Grafana | http://51.250.77.18:30300 | `admin` / `admin` |
+| Prometheus | http://51.250.77.18:30900 | — |
+| Alertmanager | http://51.250.77.18:30903 | — |
 
 ```bash
 # Проверка API
-curl -s http://51.250.9.220:30080/health
-curl -s http://51.250.9.220:30080/predict -H 'Content-Type: application/json' -d '{
+curl -s http://51.250.77.18:30080/health
+curl -s http://51.250.77.18:30080/predict -H 'Content-Type: application/json' -d '{
   "gender": "Female", "SeniorCitizen": 0, "Partner": "Yes", "Dependents": "No",
   "tenure": 1, "PhoneService": "No", "MultipleLines": "No phone service",
   "InternetService": "DSL", "OnlineSecurity": "No", "OnlineBackup": "Yes",
@@ -141,7 +141,7 @@ cd ansible-quota && ansible-playbook site.yml
    - secret `KUBECONFIG_B64` — `base64 -i ~/.kube/mlops-k3s.yaml`.
 3. Ключ `~/.ssh/mlops_diploma` нужен для Ansible (создан заранее, публичная часть зашита в tfvars).
 
-> Публичный IP сервисной VM (`158.160.147.3`) не маршрутизируется из некоторых клиентских сетей, поэтому MLflow и Airflow опубликованы через TCP-прокси (socat) на k3s-VM: порты 5000/8080. Внутри кластера поды ходят в MLflow по приватному адресу `10.130.0.6:5000`.
+> Публичный IP сервисной VM (`158.160.144.156`) не маршрутизируется из некоторых клиентских сетей, поэтому MLflow и Airflow опубликованы через TCP-прокси (socat) на k3s-VM: порты 5000/8080. Внутри кластера поды ходят в MLflow по приватному адресу `10.130.0.3:5000`.
 
 ### Что показать на скриншотах
 
