@@ -1,5 +1,4 @@
 import os
-import requests
 
 DATA_DIR = "data/raw"
 os.makedirs(DATA_DIR, exist_ok=True)

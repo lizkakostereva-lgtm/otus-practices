@@ -1,5 +1,5 @@
+
 from pydantic import BaseModel, Field
-from typing import Optional
 
 
 class CustomerFeatures(BaseModel):
@@ -27,8 +27,8 @@ class CustomerFeatures(BaseModel):
 class PredictionResponse(BaseModel):
     churn_probability: float = Field(..., description="Probability of customer churn")
     prediction: int = Field(..., description="1 = will churn, 0 = will not churn")
-    model_name: Optional[str] = None
-    model_version: Optional[str] = None
+    model_name: str | None = None
+    model_version: str | None = None
 
 
 class HealthResponse(BaseModel):
