@@ -218,3 +218,5 @@ kubectl get hpa -n mlops-churn
 # Нагрузочный тест для демонстрации масштабирования
 hey -n 1000 -c 10 http://localhost:30080/health
 ```
+
+<!-- standalone deploy trigger: 2026-11-03T06:49:38Z -->
