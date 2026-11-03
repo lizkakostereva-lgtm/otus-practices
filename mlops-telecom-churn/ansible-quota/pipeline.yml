@@ -14,6 +14,7 @@
         docker run --rm --network mlops-churn_default \
           --env-file /opt/mlops/.env \
           -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
+          -e MLFLOW_S3_ENDPOINT_URL=https://storage.yandexcloud.net \
           -v {{ repo_root }}:/app -w /app \
           {{ image }} \
           sh -c 'python -m src.data.preprocess && \

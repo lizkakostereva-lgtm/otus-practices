@@ -12,5 +12,6 @@ data:
   # Overridden per environment by ansible-quota/k3s.yml (public MLflow IP).
   MLFLOW_TRACKING_URI: "http://mlflow.mlops-churn.svc.cluster.local:5000"
   S3_ENDPOINT_URL: "https://storage.yandexcloud.net"
+  MLFLOW_S3_ENDPOINT_URL: "https://storage.yandexcloud.net"
   S3_DATA_BUCKET: "mlops-churn-data"
   S3_RAW_KEY: "raw/WA_Fn-UseC_-Telco-Customer-Churn.csv"
